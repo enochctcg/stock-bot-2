@@ -1,0 +1,41 @@
+spring:
+  application:
+    name: stock-bot
+  config:
+    # 本機用 IntelliJ / mvn 執行時，直接讀專案根目錄的 .env（不存在就略過）
+    # 系統環境變數的優先權比 .env 高，所以 docker compose 注入的 DB_HOST=mysql 會覆蓋 .env 的 localhost
+    import: optional:file:.env[.properties]
+  datasource:
+    # MySQL 8.0.19 以上（upsert 用到 INSERT ... AS alias 語法）
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:stockbot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Taipei&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+    username: ${DB_USERNAME:stockbot}
+    password: ${DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 5
+  sql:
+    init:
+      mode: always   # 每次啟動執行 schema.sql（CREATE TABLE IF NOT EXISTS）
+
+bot:
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN}
+  fugle:
+    api-key: ${FUGLE_API_KEY}
+    base-url: https://api.fugle.tw/marketdata/v1.0/stock
+    # 免費方案日內行情 API 為每分鐘 60 次，保留一些餘裕
+    requests-per-minute: 50
+    # 同一檔股票在這段時間內重複查詢會直接用快取（/now 連按也不會燒額度）
+    cache-ttl: 30s
+  # 每位使用者最多可訂閱幾檔
+  max-watch-per-user: 20
+  # 允許使用的 chat id，逗號分隔；留空代表任何人都能用（不建議，會消耗你的 API 額度）
+  allowed-chat-ids: ${ALLOWED_CHAT_IDS:}
+  schedule:
+    # 09:10 ~ 12:50 每 10 分鐘
+    cron-intraday: "0 10/10 9-12 * * MON-FRI"
+    # 13:00、13:10、13:20，以及 13:33 收盤後拿正式收盤價
+    cron-close: "0 0,10,20,33 13 * * MON-FRI"
+
+logging:
+  level:
+    com.eno.stockbot: INFO

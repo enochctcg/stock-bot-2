@@ -1,0 +1,112 @@
+package com.eno.stockbot.telegram;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import com.eno.stockbot.subscription.SubscriberRepository;
+
+/**
+ * 發送訊息：處理 Telegram 的 429 限流、使用者封鎖 bot（403）、訊息長度上限。
+ */
+@Component
+public class Notifier {
+
+    private static final Logger log = LoggerFactory.getLogger(Notifier.class);
+
+    /** Telegram 單則訊息上限 4096 字元，留一點餘裕。 */
+    static final int MAX_LENGTH = 4000;
+    /** 全域每秒最多約 30 則，兩則之間至少間隔 40ms。 */
+    private static final long MIN_INTERVAL_MS = 40;
+
+    private final TelegramClient telegram;
+    private final SubscriberRepository subscribers;
+    private long lastSentAt = 0;
+
+    public Notifier(TelegramClient telegram, SubscriberRepository subscribers) {
+        this.telegram = telegram;
+        this.subscribers = subscribers;
+    }
+
+    public void send(long chatId, String text) {
+        send(chatId, text, null);
+    }
+
+    /** @param replyMarkup 鍵盤；訊息被切成多段時只附在最後一段 */
+    public void send(long chatId, String text, Object replyMarkup) {
+        List<String> parts = split(text);
+        for (int i = 0; i < parts.size(); i++) {
+            Object markup = i == parts.size() - 1 ? replyMarkup : null;
+            if (!sendOne(chatId, parts.get(i), markup)) {
+                return;
+            }
+        }
+    }
+
+    /** @return false 代表這個使用者無法再送達（已封鎖），後續片段不用再送 */
+    private boolean sendOne(long chatId, String text, Object replyMarkup) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            pace();
+            try {
+                telegram.sendMessage(chatId, text, replyMarkup);
+                return true;
+            } catch (TelegramClient.TelegramApiException e) {
+                if (e.errorCode() == 403) {
+                    log.info("chat {} 已封鎖 bot，停止推播", chatId);
+                    subscribers.setEnabled(chatId, false);
+                    return false;
+                }
+                if (e.errorCode() == 429 && e.retryAfterSeconds() > 0) {
+                    sleepMillis(e.retryAfterSeconds() * 1000L);
+                    continue;
+                }
+                if (e.errorCode() == 0 && attempt < 3) {   // 網路錯誤
+                    sleepMillis(1000L * attempt);
+                    continue;
+                }
+                log.warn("發送給 {} 失敗: {}", chatId, e.getMessage());
+                return true;
+            }
+        }
+        return true;
+    }
+
+    private synchronized void pace() {
+        long wait = lastSentAt + MIN_INTERVAL_MS - System.currentTimeMillis();
+        if (wait > 0) {
+            sleepMillis(wait);
+        }
+        lastSentAt = System.currentTimeMillis();
+    }
+
+    /** 依換行切段，避免超過單則長度上限。 */
+    static List<String> split(String text) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            if (current.length() > 0 && current.length() + line.length() + 1 > MAX_LENGTH) {
+                parts.add(current.toString());
+                current.setLength(0);
+            }
+            if (current.length() > 0) {
+                current.append('\n');
+            }
+            current.append(line.length() > MAX_LENGTH ? line.substring(0, MAX_LENGTH) : line);
+        }
+        if (current.length() > 0) {
+            parts.add(current.toString());
+        }
+        return parts;
+    }
+
+    private static void sleepMillis(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+}
