@@ -47,15 +47,13 @@ public class WatchRepository {
                 Watch.class, chatId);
     }
 
-    /** 所有啟用中使用者的觀察清單，依 chat_id 分組並保留加入順序。 */
-    public Map<Long, List<String>> findActiveGroupedByChat() {
+    /** 所有人的觀察清單，依 chat_id 分組並保留加入順序；要推給誰由排程依各自的推播設定過濾。 */
+    public Map<Long, List<String>> findGroupedByChat() {
         Map<Long, List<String>> result = new LinkedHashMap<>();
         db.forEach("""
-                SELECT w.chat_id, w.symbol
-                  FROM watch w
-                  JOIN subscriber s ON s.chat_id = w.chat_id
-                 WHERE s.enabled = TRUE
-                 ORDER BY w.chat_id, w.id
+                SELECT chat_id, symbol
+                  FROM watch
+                 ORDER BY chat_id, id
                 """,
                 rs -> {
                     result.computeIfAbsent(rs.getLong("chat_id"), k -> new ArrayList<>())

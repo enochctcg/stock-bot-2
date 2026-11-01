@@ -12,9 +12,11 @@ spring:
     password: ${DB_PASSWORD:}
     hikari:
       maximum-pool-size: 5
-  sql:
-    init:
-      mode: always   # 每次啟動執行 schema.sql（CREATE TABLE IF NOT EXISTS）
+  flyway:
+    # 建表改由 Flyway 管理（db/migration/V*.sql），啟動時自動執行尚未跑過的版本
+    # 既有資料庫（之前由 schema.sql 建立、沒有 flyway_schema_history）會先標記為 V1，再從 V2 開始執行
+    baseline-on-migrate: true
+    baseline-version: 1
 
 bot:
   telegram:
@@ -31,10 +33,8 @@ bot:
   # 允許使用的 chat id，逗號分隔；留空代表任何人都能用（不建議，會消耗你的 API 額度）
   allowed-chat-ids: ${ALLOWED_CHAT_IDS:}
   schedule:
-    # 09:10 ~ 12:50 每 10 分鐘
-    cron-intraday: "0 10/10 9-12 * * MON-FRI"
-    # 13:00、13:10、13:20，以及 13:33 收盤後拿正式收盤價
-    cron-close: "0 0,10,20,33 13 * * MON-FRI"
+    # 交易日盤中每分鐘檢查一次，只推給「這一分鐘輪到」的使用者（時段與間隔由各使用者自行設定）
+    cron: "0 * 9-13 * * MON-FRI"
 
 logging:
   level:

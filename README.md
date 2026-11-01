@@ -1,11 +1,11 @@
-ㄊ# stock-bot
+# stock-bot
 
-Telegram 機器人：交易日盤中每 10 分鐘推播觀察清單的即時股價與漲跌幅，資料來源為富果行情 API（免費方案即可）。
+Telegram 機器人：交易日盤中依每位使用者自訂的時段與間隔（最短 1 分鐘），推播觀察清單的即時股價與漲跌幅，資料來源為富果行情 API（免費方案即可）。
 
 - Spring Boot 3.5 / Java 21
 - Telegram：直接呼叫 Bot HTTP API（long polling，不需要公網 IP）
 - 富果：`GET /intraday/quote/{symbol}`（免費方案每分鐘 60 次，程式限制在 50 次）
-- 儲存：MySQL 8（8.0.19 以上），啟動時自動執行 `schema.sql` 建表
+- 儲存：MySQL 8（8.0.19 以上），資料表由 Flyway 管理（`src/main/resources/db/migration`），啟動時自動升級
 
 ## 快速開始
 
@@ -64,7 +64,7 @@ MySQL 資料在 `./data/mysql`，重建容器不會遺失訂閱。
 查看資料：
 
 ```sql
-SELECT * FROM stockbot.subscriber;
+SELECT chat_id, username, enabled, push_start, push_end, interval_minutes FROM stockbot.subscriber;
 SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 ```
 
@@ -77,18 +77,18 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 | 📊 即時報價 | 查詢目前價格，訊息附 `🔄 更新`（原地更新）、`📋 管理清單` |
 | 📋 觀察清單 | 每檔一個 `❌` 按鈕，點了就移除並原地更新清單；下方有 `➕ 新增`、`📊 即時報價` |
 | ➕ 新增股票 | 送出 ForceReply 提示，直接回覆代號即可，可一次多檔（每人上限 20 檔） |
-| ⚙️ 推播設定 | 顯示推播狀態，`⏸ 暫停推播` / `▶️ 恢復推播` 切換 |
+| ⚙️ 推播設定 | 顯示推播時段、間隔與狀態；可修改時段、間隔，或 `⏸ 暫停` / `▶️ 恢復` |
 
-每 10 分鐘的推播訊息也附有 `🔄 更新`、`📋 管理清單` 按鈕。主選單被收起來時，隨便打字或傳 `/help` 會重新顯示。
+定時推播的訊息也附有 `🔄 更新`、`📋 管理清單` 按鈕。主選單被收起來時，隨便打字或傳 `/help` 會重新顯示。
 
 原本的指令仍可使用：
 
 | 指令 | 說明 |
 |---|---|
-| `/start` | 註冊、顯示 chat id 與主選單 |
+| `/start` | 註冊、顯示 chat id 與主選單；尚未設定推播時直接進入設定流程 |
 | `/add 2330 2317` | 加入觀察清單；不帶參數時送出新增提示 |
 | `/remove 2330` | 移除；不帶參數時顯示可點擊移除的清單 |
-| `/list`、`/now`、`/settings` | 觀察清單、即時報價、推播設定 |
+| `/list`、`/now`、`/settings` | 觀察清單、即時報價、推播設定（時段、間隔） |
 | `/pause`、`/resume` | 暫停、恢復定時推播 |
 
 按鈕的 `callback_data` 格式定義在 `CommandHandler`（`q:refresh`、`l:rm:2330`、`s:pause`…），上限 64 bytes。
@@ -102,24 +102,36 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 ⚪ 6488 環球晶  尚無成交
 ```
 
-## 推播時間
+## 推播設定
 
-| 時間 | cron（`application.yml`） |
-|---|---|
-| 09:10 ~ 12:50 每 10 分鐘 | `bot.schedule.cron-intraday` |
-| 13:00、13:10、13:20、13:33（收盤價） | `bot.schedule.cron-close` |
+每位使用者自己設定**推播時段**與**推播間隔**，兩者都設定完成才會開始定時推播：
 
-- 09:00 剛開盤很多股票還沒成交，所以從 09:10 開始
-- 13:30 收盤撮合結果需要一點時間，最後一次排在 13:33 拿正式收盤價
-- 國定假日、颱風假：富果回傳的資料日期不是今天時，自動略過推播，不需要維護假日表
+1. **時段**：交易日 09:00 ~ 13:30 之間。預設選項有「整個盤中 09:00–13:30」「開盤 1 小時」「收盤前 1 小時」，也可以自訂（輸入 `09:00-13:30`、`0900-1330`、`9:00~13:30` 都可以）
+2. **間隔**：1 ~ 270 分鐘，預設選項 1 / 5 / 10 / 15 / 30 / 60 分鐘，也可以自訂
+
+間隔從時段的開始時間起算，頭尾都包含。例如 `09:05–10:00、每 20 分鐘` → 09:05、09:25、09:45。
+
+- **新使用者**：`/start` 後直接進入兩步驟設定；設定前加入的股票會提示「還沒設定推播」
+- **既有使用者**（升級前就訂閱的人）：V2 migration 會把他們標記為待通知，服務啟動後發一次「請重新設定推播」的訊息（附設定按鈕），重啟不會重複通知。重新設定前不會收到定時推播
+- **排程**：`bot.schedule.cron`（預設 `0 * 9-13 * * MON-FRI`）每分鐘檢查一次，只推給這一分鐘輪到的使用者
+- **國定假日、颱風假**：富果回傳的資料日期不是今天時，自動略過推播，不需要維護假日表
 
 ## 額度估算
 
-每輪推播時，所有使用者觀察清單的**聯集**中每檔只查一次，結果共用。
+同一分鐘輪到的所有使用者，觀察清單取**聯集**後每檔只查一次，結果共用。
 30 秒內重複查詢同一檔會直接用快取（`bot.fugle.cache-ttl`）。
 
-聯集 30 檔 → 每 10 分鐘 30 次請求，遠低於免費方案的每分鐘 60 次。
-聯集超過 50 檔時，限流器會自動排隊，一輪推播會花超過一分鐘，但不會被富果回 429。
+最壞情況是大家都設定每 1 分鐘：每分鐘的請求數 = 所有人觀察清單的聯集檔數。
+富果免費方案每分鐘 60 次，程式限制在 50 次，所以**聯集最好控制在 50 檔以內**。
+超過時限流器會自動排隊、不會被回 429，但那一輪推播會延遲到下一分鐘之後，下一分鐘的推播可能被略過。
+
+## 資料表版本（Flyway）
+
+- `V1__init.sql`：原本的 `subscriber`、`watch`
+- `V2__push_schedule.sql`：`subscriber` 新增 `push_start`、`push_end`、`interval_minutes`、`setup_notice_pending`
+
+之前由 `schema.sql` 建好的資料庫，第一次啟動時會自動標記為 V1（`baseline-on-migrate`），再執行 V2。
+之後要改表結構，新增 `V3__xxx.sql` 即可，不要修改已執行過的檔案。
 
 ## 專案結構
 
@@ -128,11 +140,11 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 ```
 com.eno.stockbot
 ├── common/        JdbcUtil（JdbcTemplate 封裝：Optional 單筆、record 映射、慢查詢 log）
-├── bot/           Command（指令解析）、Incoming（訊息 / 按鈕輸入）、CommandHandler（畫面與按鈕邏輯）
+├── bot/           Command、Incoming、CommandHandler（畫面、按鈕、推播設定流程）、SetupNoticeSender（啟動時通知既有使用者）
 ├── config/        BotProperties（bot.* 設定）、AppConfig
 ├── market/        FugleClient（REST + 限流 + 429 重試）、QuoteService（快取）、Quote、RateLimiter
-├── report/        IntradayReportJob（排程推播）、ReportFormatter（訊息格式）
-├── subscription/  SubscriberRepository、WatchRepository（JdbcTemplate + MySQL）
+├── report/        IntradayReportJob（每分鐘檢查、推給到期的使用者）、ReportFormatter（訊息格式）
+├── subscription/  Subscriber、PushSchedule（時段 / 間隔解析與到期判斷）、SubscriberRepository、WatchRepository
 └── telegram/      TelegramClient、TelegramPoller（long polling）、Notifier（429/403 處理、訊息切段）、Keyboards（按鈕）
 ```
 
@@ -148,4 +160,3 @@ curl -H "X-API-KEY: $FUGLE_API_KEY" https://api.fugle.tw/marketdata/v1.0/stock/i
 ## 之後可以擴充
 
 - 漲跌幅超過門檻的即時警報 → 行情改用富果 WebSocket（免費方案可訂閱 5 檔）
-- 表結構開始需要變更時，把 `schema.sql` 換成 Flyway migration

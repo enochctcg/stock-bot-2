@@ -22,7 +22,7 @@ public record BotProperties(
     public record Fugle(String apiKey, String baseUrl, int requestsPerMinute, Duration cacheTtl) {
     }
 
-    public record Schedule(String cronIntraday, String cronClose) {
+    public record Schedule(String cron) {
     }
 
     /** 未設定白名單時任何人都能使用。 */
