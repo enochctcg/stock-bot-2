@@ -2,6 +2,7 @@ package com.eno.stockbot.bot;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -49,18 +50,24 @@ public class SetupNoticeSender {
     void sendPending() {
         int sent = 0;
         for (Subscriber s : subscribers.findPendingSetupNotice()) {
+            MDC.put("chatId", String.valueOf(s.chatId()));
             try {
                 // 已暫停推播、不在白名單、或已經自己設定好的使用者不打擾
                 if (s.enabled() && !s.configured() && props.isAllowed(s.chatId())) {
                     CommandHandler.View setup = handler.windowView(s.chatId());
-                    notifier.send(s.chatId(), NOTICE + "\n\n" + setup.text(), setup.markup());
-                    sent++;
+                    if (notifier.send(s.chatId(), NOTICE + "\n\n" + setup.text(), setup.markup())) {
+                        sent++;
+                        log.info("已通知 chat {} 重新設定推播", s.chatId());
+                    }
+                } else {
+                    log.info("不通知 chat {}（enabled={} configured={}）", s.chatId(), s.enabled(), s.configured());
                 }
             } catch (RuntimeException e) {
                 log.warn("通知 {} 重新設定推播失敗: {}", s.chatId(), e.getMessage());
             } finally {
                 // 不論成功與否都只通知一次；送不到（例如封鎖 bot）的使用者，之後用 /start 也會進入設定
                 subscribers.clearSetupNotice(s.chatId());
+                MDC.remove("chatId");
             }
         }
         if (sent > 0) {

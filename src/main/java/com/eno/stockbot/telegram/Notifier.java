@@ -31,47 +31,70 @@ public class Notifier {
         this.subscribers = subscribers;
     }
 
-    public void send(long chatId, String text) {
-        send(chatId, text, null);
+    public boolean send(long chatId, String text) {
+        return send(chatId, text, null);
     }
 
-    /** @param replyMarkup 鍵盤；訊息被切成多段時只附在最後一段 */
-    public void send(long chatId, String text, Object replyMarkup) {
+    /**
+     * @param replyMarkup 鍵盤；訊息被切成多段時只附在最後一段
+     * @return 所有片段都送達才回傳 true
+     */
+    public boolean send(long chatId, String text, Object replyMarkup) {
         List<String> parts = split(text);
+        boolean allSent = true;
         for (int i = 0; i < parts.size(); i++) {
             Object markup = i == parts.size() - 1 ? replyMarkup : null;
-            if (!sendOne(chatId, parts.get(i), markup)) {
-                return;
+            Result r = sendOne(chatId, parts.get(i), markup);
+            if (r == Result.SENT) {
+                log.info("已送出訊息 → chat {}{}：{}", chatId,
+                        parts.size() > 1 ? "（第 " + (i + 1) + "/" + parts.size() + " 段）" : "", preview(parts.get(i)));
+            } else {
+                allSent = false;
+                if (r == Result.BLOCKED) {
+                    return false;   // 封鎖了，後面的片段不用再送
+                }
             }
         }
+        return allSent;
     }
 
-    /** @return false 代表這個使用者無法再送達（已封鎖），後續片段不用再送 */
-    private boolean sendOne(long chatId, String text, Object replyMarkup) {
+    private enum Result { SENT, BLOCKED, FAILED }
+
+    private Result sendOne(long chatId, String text, Object replyMarkup) {
         for (int attempt = 1; attempt <= 3; attempt++) {
             pace();
             try {
                 telegram.sendMessage(chatId, text, replyMarkup);
-                return true;
+                return Result.SENT;
             } catch (TelegramClient.TelegramApiException e) {
                 if (e.errorCode() == 403) {
-                    log.info("chat {} 已封鎖 bot，停止推播", chatId);
+                    log.warn("chat {} 已封鎖 bot，停止推播", chatId);
                     subscribers.setEnabled(chatId, false);
-                    return false;
+                    return Result.BLOCKED;
                 }
                 if (e.errorCode() == 429 && e.retryAfterSeconds() > 0) {
+                    log.warn("送給 chat {} 被 Telegram 限流，{} 秒後重試（第 {} 次）", chatId, e.retryAfterSeconds(), attempt);
                     sleepMillis(e.retryAfterSeconds() * 1000L);
                     continue;
                 }
                 if (e.errorCode() == 0 && attempt < 3) {   // 網路錯誤
+                    log.warn("送給 chat {} 網路錯誤，{} 秒後重試（第 {} 次）: {}", chatId, attempt, attempt, e.getMessage());
                     sleepMillis(1000L * attempt);
                     continue;
                 }
-                log.warn("發送給 {} 失敗: {}", chatId, e.getMessage());
-                return true;
+                log.warn("發送給 chat {} 失敗: {}", chatId, e.getMessage());
+                return Result.FAILED;
             }
         }
-        return true;
+        log.warn("發送給 chat {} 失敗：重試 3 次仍未成功", chatId);
+        return Result.FAILED;
+    }
+
+    /** log 只印第一行的前 60 個字，避免整份報價洗版。 */
+    public static String preview(String text) {
+        String first = text.lines().findFirst().orElse("");
+        String more = text.contains("\n") ? " …（共 " + text.lines().count() + " 行）" : "";
+        return (first.length() > 60 ? first.substring(0, 60) + "…" : first) + more;
     }
 
     private synchronized void pace() {

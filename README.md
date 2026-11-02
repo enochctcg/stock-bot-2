@@ -125,6 +125,35 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 富果免費方案每分鐘 60 次，程式限制在 50 次，所以**聯集最好控制在 50 檔以內**。
 超過時限流器會自動排隊、不會被回 429，但那一輪推播會延遲到下一分鐘之後，下一分鐘的推播可能被略過。
 
+## Log
+
+每一行都帶**台北時間（毫秒）**、**執行緒名稱**，處理使用者操作時還會帶 chat id 與 Telegram update id：
+
+```
+2026-11-02 09:10:00.012 INFO  [push-job-1] [chat=- upd=-] IntradayReportJob - 09:10 排程檢查：3 位已設定推播，1 位到期 [987654321]
+2026-11-02 09:10:00.358 INFO  [push-job-1] [chat=987654321 upd=-] IntradayReportJob - 09:10 推播成功 → chat 987654321，2 檔：[2330, 2317]
+2026-11-02 10:03:41.207 INFO  [tg-update-12] [chat=987654321 upd=123456790] TelegramPoller - 收到 按鈕 data=l:rm:2330 msg=55 user=eno_dev
+2026-11-02 10:03:41.231 INFO  [tg-update-12] [chat=987654321 upd=123456790] WatchRepository - [DB] 觀察清單移除 chat 987654321：2330（已刪除）
+```
+
+| 執行緒 | 用途 |
+|---|---|
+| `tg-update-N` | 處理一筆使用者訊息或按鈕（virtual thread，每筆一條） |
+| `push-job-N` | 每分鐘的定時推播排程 |
+| `setup-notice` | 啟動時通知既有使用者重新設定 |
+| `telegram-poller` | long polling 收訊迴圈 |
+
+記錄的事件：
+
+- **收到更新**：每筆訊息 / 按鈕的內容、使用者，以及處理耗時
+- **資料變更**（`[DB]`）：註冊、新增 / 移除股票、修改推播時段 / 間隔、暫停 / 恢復
+- **訊息**：每則送出的訊息（只印第一行）、每次原地更新、按鈕提示
+- **推播**：每輪到期的使用者、查詢的股票、每位使用者的推播結果、整輪耗時；沒人到期的分鐘只記 DEBUG
+- **錯誤**：Telegram 限流 / 網路重試、使用者封鎖 bot、富果 API 失敗
+
+輸出位置：console，以及 `logs/stock-bot.log`（10MB 或跨日切檔，壓縮保留 30 天）。
+Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 的 `logging.pattern`。
+
 ## 資料表版本（Flyway）
 
 - `V1__init.sql`：原本的 `subscriber`、`watch`

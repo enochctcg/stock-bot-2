@@ -28,6 +28,8 @@ services:
     environment:
       DB_HOST: mysql
       DB_PORT: 3306
+    volumes:
+      - ./logs:/app/logs     # log 檔（logs/stock-bot.log）留在主機上，重建容器不會遺失
     depends_on:
       mysql:
         condition: service_healthy

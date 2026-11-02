@@ -12,6 +12,7 @@ import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -54,13 +55,17 @@ public class IntradayReportJob {
         // 先取得這一分鐘，避免查富果花了幾秒後才計算時間
         LocalTime now = LocalTime.now(clock).truncatedTo(ChronoUnit.MINUTES);
 
-        List<Long> due = subscribers.findPushReady().stream()
+        List<Subscriber> ready = subscribers.findPushReady();
+        List<Long> due = ready.stream()
                 .filter(s -> s.schedule().map(p -> p.isDue(now)).orElse(false))
                 .map(Subscriber::chatId)
                 .toList();
         if (due.isEmpty()) {
+            // 每分鐘都會跑，沒人到期時只記 DEBUG，避免洗版
+            log.debug("{} 排程檢查：{} 位已設定推播，這一分鐘沒有人到期", PushSchedule.format(now), ready.size());
             return;
         }
+        log.info("{} 排程檢查：{} 位已設定推播，{} 位到期 {}", PushSchedule.format(now), ready.size(), due.size(), due);
 
         Map<Long, List<String>> allWatches = watches.findGroupedByChat();
         Map<Long, List<String>> byChat = new LinkedHashMap<>();
@@ -68,12 +73,16 @@ public class IntradayReportJob {
             List<String> list = allWatches.get(chatId);
             if (list != null && !list.isEmpty()) {
                 byChat.put(chatId, list);
+            } else {
+                log.info("{} 略過 chat {}：觀察清單是空的", PushSchedule.format(now), chatId);
             }
         }
         if (byChat.isEmpty()) {
             return;
         }
+        long start = System.nanoTime();
         push(now, byChat);
+        log.info("{} 本輪推播結束，耗時 {} ms", PushSchedule.format(now), (System.nanoTime() - start) / 1_000_000);
     }
 
     private void push(LocalTime now, Map<Long, List<String>> byChat) {
@@ -83,6 +92,7 @@ public class IntradayReportJob {
 
         Map<String, Quote> result;
         try {
+            log.info("{} 查詢報價 {} 檔：{}", PushSchedule.format(now), symbols.size(), symbols);
             result = quotes.getQuotes(symbols);
         } catch (FugleClient.FugleException e) {
             log.error("{} 推播中止: {}", PushSchedule.format(now), e.getMessage());
@@ -100,7 +110,22 @@ public class IntradayReportJob {
         String header = "⏱ " + PushSchedule.format(now) + (closed ? " 收盤報價" : " 盤中報價");
 
         Object buttons = CommandHandler.quoteButtons();
-        byChat.forEach((chatId, list) -> notifier.send(chatId, ReportFormatter.format(header, list, result), buttons));
-        log.info("{} 已推播 {} 位使用者、{} 檔股票", PushSchedule.format(now), byChat.size(), symbols.size());
+        int ok = 0;
+        for (Map.Entry<Long, List<String>> e : byChat.entrySet()) {
+            long chatId = e.getKey();
+            MDC.put("chatId", String.valueOf(chatId));   // 這位使用者推播過程中的 log 都帶上 chat id
+            try {
+                boolean sent = notifier.send(chatId, ReportFormatter.format(header, e.getValue(), result), buttons);
+                if (sent) {
+                    ok++;
+                    log.info("{} 推播成功 → chat {}，{} 檔：{}", PushSchedule.format(now), chatId, e.getValue().size(), e.getValue());
+                } else {
+                    log.warn("{} 推播失敗 → chat {}", PushSchedule.format(now), chatId);
+                }
+            } finally {
+                MDC.remove("chatId");
+            }
+        }
+        log.info("{} 推播完成：{}/{} 位使用者成功、共 {} 檔股票", PushSchedule.format(now), ok, byChat.size(), symbols.size());
     }
 }

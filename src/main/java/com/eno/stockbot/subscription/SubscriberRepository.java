@@ -3,6 +3,8 @@ package com.eno.stockbot.subscription;
 import java.util.List;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 
 import com.eno.stockbot.common.JdbcUtil;
@@ -12,6 +14,8 @@ public class SubscriberRepository {
 
     private static final String COLUMNS = "chat_id, username, enabled, push_start, push_end, interval_minutes";
 
+    private static final Logger log = LoggerFactory.getLogger(SubscriberRepository.class);
+
     private final JdbcUtil db;
 
     public SubscriberRepository(JdbcUtil db) {
@@ -20,10 +24,16 @@ public class SubscriberRepository {
 
     /** 新增或更新使用者；既有使用者只更新 username（傳 null 時保留原值），不動其他設定。 */
     public void upsert(long chatId, String username) {
-        db.update("""
+        int rows = db.update("""
                 INSERT INTO subscriber (chat_id, username) VALUES (?, ?) AS n
                 ON DUPLICATE KEY UPDATE username = COALESCE(n.username, subscriber.username)
                 """, chatId, username);
+        // MySQL：新增回 1、更新回 2、沒有變化回 0（大部分的呼叫都是 0，不記錄）
+        if (rows == 1) {
+            log.info("[DB] 新使用者註冊 chat {} username={}", chatId, username);
+        } else if (rows == 2) {
+            log.info("[DB] 使用者 chat {} username 更新為 {}", chatId, username);
+        }
     }
 
     public Optional<Subscriber> find(long chatId) {
@@ -31,7 +41,8 @@ public class SubscriberRepository {
     }
 
     public void setEnabled(long chatId, boolean enabled) {
-        db.update("UPDATE subscriber SET enabled = ? WHERE chat_id = ?", enabled, chatId);
+        int rows = db.update("UPDATE subscriber SET enabled = ? WHERE chat_id = ?", enabled, chatId);
+        log.info("[DB] chat {} 定時推播 → {}（{} 筆）", chatId, enabled ? "開啟" : "暫停", rows);
     }
 
     /** 不存在的使用者視為未啟用。 */
@@ -41,12 +52,14 @@ public class SubscriberRepository {
     }
 
     public void setWindow(long chatId, PushSchedule.Window window) {
-        db.update("UPDATE subscriber SET push_start = ?, push_end = ? WHERE chat_id = ?",
+        int rows = db.update("UPDATE subscriber SET push_start = ?, push_end = ? WHERE chat_id = ?",
                 window.start(), window.end(), chatId);
+        log.info("[DB] chat {} 推播時段 → {}（{} 筆）", chatId, window, rows);
     }
 
     public void setInterval(long chatId, int minutes) {
-        db.update("UPDATE subscriber SET interval_minutes = ? WHERE chat_id = ?", minutes, chatId);
+        int rows = db.update("UPDATE subscriber SET interval_minutes = ? WHERE chat_id = ?", minutes, chatId);
+        log.info("[DB] chat {} 推播間隔 → 每 {} 分鐘（{} 筆）", chatId, minutes, rows);
     }
 
     /** 啟用中且已設定時段與間隔的使用者，給排程判斷這一分鐘要推給誰。 */
@@ -69,5 +82,6 @@ public class SubscriberRepository {
 
     public void clearSetupNotice(long chatId) {
         db.update("UPDATE subscriber SET setup_notice_pending = FALSE WHERE chat_id = ?", chatId);
+        log.info("[DB] chat {} 已清除「待通知重新設定」標記", chatId);
     }
 }

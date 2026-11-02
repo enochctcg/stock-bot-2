@@ -12,6 +12,10 @@ spring:
     password: ${DB_PASSWORD:}
     hikari:
       maximum-pool-size: 5
+  task:
+    scheduling:
+      # 排程執行緒名稱，log 裡會顯示為 [push-job-1]
+      thread-name-prefix: push-job-
   flyway:
     # 建表改由 Flyway 管理（db/migration/V*.sql），啟動時自動執行尚未跑過的版本
     # 既有資料庫（之前由 schema.sql 建立、沒有 flyway_schema_history）會先標記為 V1，再從 V2 開始執行
@@ -39,3 +43,16 @@ bot:
 logging:
   level:
     com.eno.stockbot: INFO
+  # 每一行都帶：台北時間（毫秒）、等級、完整執行緒名稱、使用者 chat id / Telegram update id（有的話）
+  # 例：2026-11-02 09:10:00.012 INFO  [push-job-1] [chat=987654321 upd=-] IntradayReportJob - 推播 ...
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS,Asia/Taipei} %clr(%-5level) [%thread] [chat=%X{chatId:--} upd=%X{updateId:--}] %clr(%logger{0}){cyan} - %msg%n%wEx"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS,Asia/Taipei} %-5level [%thread] [chat=%X{chatId:--} upd=%X{updateId:--}] %logger{0} - %msg%n%wEx"
+  # 同時寫檔：logs/stock-bot.log，超過 10MB 或跨日就切檔，保留 30 天
+  file:
+    name: logs/stock-bot.log
+  logback:
+    rollingpolicy:
+      file-name-pattern: logs/stock-bot.%d{yyyy-MM-dd}.%i.log.gz
+      max-file-size: 10MB
+      max-history: 30

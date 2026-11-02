@@ -315,8 +315,10 @@ public class CommandHandler {
     private void edit(Incoming.Callback cb, View view) {
         try {
             telegram.editMessageText(cb.chatId(), cb.messageId(), view.text(), view.markup());
+            log.info("已原地更新訊息 {} → chat {}：{}", cb.messageId(), cb.chatId(), Notifier.preview(view.text()));
         } catch (TelegramClient.TelegramApiException e) {
             if (e.isMessageNotModified()) {
+                log.info("訊息 {} 內容沒有變化，略過更新", cb.messageId());
                 return;
             }
             log.info("無法編輯訊息 {}，改送新訊息: {}", cb.messageId(), e.getMessage());
@@ -331,6 +333,9 @@ public class CommandHandler {
     private void answer(Incoming.Callback cb, String toast) {
         try {
             telegram.answerCallbackQuery(cb.id(), toast);
+            if (toast != null) {
+                log.info("按鈕提示：{}", toast);
+            }
         } catch (TelegramClient.TelegramApiException e) {
             log.debug("answerCallbackQuery 失敗: {}", e.getMessage());   // 按鈕點太久以前會失敗，不影響功能
         }
