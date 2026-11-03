@@ -213,42 +213,28 @@ sequenceDiagram
 
 ## 2. 使用者操作流程
 
+每個畫面裡的按鈕寫在方塊內；`→` 表示會跳到另一個畫面。
+
 ```mermaid
+%%{init: {"flowchart": {"curve": "linear", "nodeSpacing": 24, "rankSpacing": 40}}}%%
 flowchart TD
-    start(["/start"]) --> setupQ{"已設定推播？"}
-    setupQ -- "否" --> w
-    setupQ -- "是" --> menu
-    notice(["既有使用者<br/>收到「請重新設定」通知"]) --> w
+    start["/start<br/>或 既有使用者收到「請重新設定」通知"]
+    setup["⚙️ 推播設定（兩步都完成才開始推播）<br/>① 選時段 → ② 選間隔 → ✅ 設定完成<br/>已設定過的使用者 /start 會直接到主選單"]
 
-    subgraph setup["推播設定（兩步都完成才開始推播）"]
-        w["① 選時段<br/>預設選項 或 ✏️ 自訂輸入"]
-        i["② 選間隔<br/>預設選項 或 ✏️ 自訂輸入"]
-        w --> i --> done["✅ 設定完成"]
+    subgraph menu["主選單"]
+        quote["📊 即時報價<br/>──────<br/>🔄 更新（原地刷新）<br/>📋 管理清單 → 觀察清單"]
+        list["📋 觀察清單<br/>──────<br/>❌ 點股票即移除<br/>➕ 新增 → 新增股票<br/>📊 即時報價 → 即時報價"]
+        add["➕ 新增股票<br/>──────<br/>回覆股票代號<br/>📋 查看清單 → 觀察清單<br/>⚙️ 設定推播 → ①<br/>（尚未設定時才有）"]
+        settings["⚙️ 推播設定<br/>──────<br/>🕘 修改時段 → ①<br/>⏱ 修改間隔 → ②<br/>⏸ 暫停 / ▶️ 恢復"]
     end
-    done --> menu
 
-    menu{{"主選單"}}
-    menu -- "📊 即時報價" --> quote["報價訊息"]
-    menu -- "📋 觀察清單" --> list["觀察清單"]
-    menu -- "➕ 新增股票" --> add["回覆股票代號"]
-    menu -- "⚙️ 推播設定" --> settings["推播設定總覽"]
+    subgraph auto["交易日自動收到"]
+        push["⏱ 定時推播<br/>依自己的時段與間隔<br/>附 🔄 更新、📋 管理清單"]
+        excel["📑 14:00 當天 Excel<br/>暫停推播時不會收到"]
+    end
 
-    quote -- "🔄 更新" --> quote
-    quote -- "📋 管理清單" --> list
-    list -- "❌ 點股票" --> list
-    list -- "➕ 新增" --> add
-    list -- "📊 即時報價" --> quote
-    add --> addResult["新增結果"]
-    addResult -- "📋 查看清單" --> list
-    addResult -- "➕ 繼續新增" --> add
-    addResult -. "尚未設定時：⚙️ 設定推播" .-> w
-
-    settings -- "🕘 修改時段" --> w
-    settings -- "⏱ 修改間隔" --> i
-    settings -- "⏸ 暫停 / ▶️ 恢復" --> settings
-
-    push(["⏱ 交易日依設定收到定時推播"]) --> quote
-    excelMsg(["📑 交易日 14:00 收到當天的 Excel<br/>（暫停推播時不會收到）"])
+    start --> setup --> menu
+    menu ~~~ auto
 ```
 
 > 修改時段或間隔時，若另一項已設定，存完就直接回到設定總覽，不會再走下一步。

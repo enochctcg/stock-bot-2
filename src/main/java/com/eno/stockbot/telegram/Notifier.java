@@ -81,7 +81,7 @@ public class Notifier {
                 return Result.SENT;
             } catch (TelegramClient.TelegramApiException e) {
                 if (e.errorCode() == 403) {
-                    log.warn("chat {} 已封鎖 bot，停止推播", chatId);
+                    log.warn("[訂閱] chat {} 已封鎖 bot → 自動取消訂閱推播", chatId);
                     subscribers.setEnabled(chatId, false);
                     return Result.BLOCKED;
                 }

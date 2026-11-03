@@ -153,7 +153,9 @@ SELECT trade_date, snapshot_time, symbol, price, change_percent FROM stockbot.qu
 ```
 2026-11-02 09:10:00.012 INFO  [push-job-1] [chat=- upd=-] IntradayReportJob - 09:10 排程檢查：3 位已設定推播，1 位到期 [987654321]
 2026-11-02 09:10:00.358 INFO  [push-job-1] [chat=987654321 upd=-] IntradayReportJob - 09:10 推播成功 → chat 987654321，2 檔：[2330, 2317]
+2026-11-02 10:03:41.205 INFO  [telegram-poller] [chat=- upd=-] TelegramPoller - offset 123456790 → 123456791
 2026-11-02 10:03:41.207 INFO  [tg-update-12] [chat=987654321 upd=123456790] TelegramPoller - 收到 按鈕 data=l:rm:2330 msg=55 user=eno_dev
+2026-11-02 10:03:41.215 INFO  [tg-update-12] [chat=987654321 upd=123456790] CommandHandler - 使用者 chat 987654321 訂閱於 2026-10-28 21:14:05，推播開啟中，觀察 3 檔
 2026-11-02 10:03:41.231 INFO  [tg-update-12] [chat=987654321 upd=123456790] WatchRepository - [DB] 觀察清單移除 chat 987654321：2330（已刪除）
 ```
 
@@ -166,7 +168,9 @@ SELECT trade_date, snapshot_time, symbol, price, change_percent FROM stockbot.qu
 
 記錄的事件：
 
-- **收到更新**：每筆訊息 / 按鈕的內容、使用者，以及處理耗時
+- **收到更新**：每筆訊息 / 按鈕的內容、使用者、這位使用者的訂閱時間與狀態，以及處理耗時
+- **offset**：啟動時的起始值，以及每筆 update 處理後的變更（`offset 舊 → 新`）
+- **訂閱**（`[訂閱]`）：新使用者訂閱、再次 /start、暫停 / 恢復推播、封鎖 bot 自動取消；服務啟動時列出所有訂閱者（訂閱時間、推播狀態、觀察檔數）
 - **資料變更**（`[DB]`）：註冊、新增 / 移除股票、修改推播時段 / 間隔、暫停 / 恢復
 - **訊息**：每則送出的訊息（只印第一行）、每次原地更新、按鈕提示
 - **推播**：每輪到期的使用者、查詢的股票、每位使用者的推播結果、整輪耗時；沒人到期的分鐘只記 DEBUG

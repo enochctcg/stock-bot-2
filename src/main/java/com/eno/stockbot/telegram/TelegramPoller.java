@@ -53,7 +53,7 @@ public class TelegramPoller implements SmartLifecycle {
         running = true;
         pollThread = new Thread(this::loop, "telegram-poller");
         pollThread.start();
-        log.info("Telegram long polling 已啟動");
+        log.info("Telegram long polling 已啟動，offset 起始值 {}（0 = 從 Telegram 尚未確認的第一筆開始）", offset);
     }
 
     private void loop() {
@@ -63,7 +63,9 @@ public class TelegramPoller implements SmartLifecycle {
                 JsonNode updates = telegram.getUpdates(offset);
                 failures = 0;
                 for (JsonNode update : updates) {
-                    offset = update.path("update_id").asLong() + 1;
+                    long next = update.path("update_id").asLong() + 1;
+                    log.info("offset {} → {}", offset, next);
+                    offset = next;
                     dispatch(update);
                 }
             } catch (TelegramClient.TelegramApiException e) {

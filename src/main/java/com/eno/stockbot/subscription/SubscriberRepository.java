@@ -1,5 +1,6 @@
 package com.eno.stockbot.subscription;
 
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +16,16 @@ import com.eno.stockbot.common.JdbcUtil;
 public class SubscriberRepository {
 
     private static final String COLUMNS = "chat_id, username, enabled, push_start, push_end, interval_minutes";
+
+    /** 訂閱資訊：給 log 顯示誰在什麼時候訂閱、目前狀態。 */
+    public record Summary(long chatId, String username, boolean enabled, LocalDateTime createdAt, int watchCount) {
+    }
+
+    private static final String SUMMARY_SQL = """
+            SELECT s.chat_id, s.username, s.enabled, s.created_at,
+                   (SELECT COUNT(*) FROM watch w WHERE w.chat_id = s.chat_id) AS watch_count
+              FROM subscriber s
+            """;
 
     private static final Logger log = LoggerFactory.getLogger(SubscriberRepository.class);
 
@@ -32,7 +43,7 @@ public class SubscriberRepository {
                 """, chatId, username);
         // MySQL：新增回 1、更新回 2、沒有變化回 0（大部分的呼叫都是 0，不記錄）
         if (rows == 1) {
-            log.info("[DB] 新使用者註冊 chat {} username={}", chatId, username);
+            log.info("[DB][訂閱] 新使用者訂閱 chat {} username={}", chatId, username);
         } else if (rows == 2) {
             log.info("[DB] 使用者 chat {} username 更新為 {}", chatId, username);
         }
@@ -40,6 +51,15 @@ public class SubscriberRepository {
 
     public Optional<Subscriber> find(long chatId) {
         return db.queryOne("SELECT " + COLUMNS + " FROM subscriber WHERE chat_id = ?", Subscriber.class, chatId);
+    }
+
+    public Optional<Summary> findSummary(long chatId) {
+        return db.queryOne(SUMMARY_SQL + " WHERE s.chat_id = ?", Summary.class, chatId);
+    }
+
+    /** 所有使用者，依訂閱時間排序。 */
+    public List<Summary> findAllSummaries() {
+        return db.queryList(SUMMARY_SQL + " ORDER BY s.created_at, s.chat_id", Summary.class);
     }
 
     public void setEnabled(long chatId, boolean enabled) {

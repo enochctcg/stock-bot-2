@@ -100,6 +100,8 @@ public class CommandHandler {
 
             推播時段與間隔由你自己設定（交易日 09:00 ~ 13:30，最短每 1 分鐘）。""";
 
+    private static final DateTimeFormatter SUBSCRIBED_AT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     /** 畫面 = 文字 + 鍵盤（可為 null）。 */
     record View(String text, Object markup) {
     }
@@ -129,6 +131,7 @@ public class CommandHandler {
 
     public void handleMessage(Incoming.Message msg) {
         long chatId = msg.chatId();
+        logSubscriber(chatId);
         String text = msg.text().strip();
         Optional<Command> command = Command.parse(text);
 
@@ -199,8 +202,13 @@ public class CommandHandler {
 
     /** 第一次使用：送出歡迎訊息與主選單，接著直接進入推播設定。 */
     private View start(long chatId, String username) {
+        Optional<Subscriber> before = subscriber(chatId);
         subscribers.upsert(chatId, username);
         subscribers.setEnabled(chatId, true);
+        if (before.isPresent()) {
+            log.info("[訂閱] chat {} username={} 再次 /start：{}", chatId, username,
+                    before.get().enabled() ? "原本就在訂閱中" : "重新訂閱（恢復推播）");
+        }
         String welcome = "歡迎！你的 chat id 是 " + chatId + "\n\n" + HELP;
         if (isConfigured(chatId)) {
             return new View(welcome, Keyboards.mainMenu());
@@ -248,6 +256,7 @@ public class CommandHandler {
 
     public void handleCallback(Incoming.Callback cb) {
         long chatId = cb.chatId();
+        logSubscriber(chatId);
         if (!props.isAllowed(chatId)) {
             answer(cb, "⛔ 沒有使用權限");
             return;
@@ -576,8 +585,20 @@ public class CommandHandler {
     }
 
     private void setEnabled(long chatId, String username, boolean enabled) {
+        boolean wasEnabled = subscribers.isEnabled(chatId);
         subscribers.upsert(chatId, username);
         subscribers.setEnabled(chatId, enabled);
+        log.info("[訂閱] chat {} username={} {}{}", chatId, username,
+                enabled ? "恢復訂閱推播" : "取消訂閱推播（暫停）",
+                wasEnabled == enabled ? "，原本就是這個狀態" : "");
+    }
+
+    /** 每筆訊息 / 按鈕都記一次這位使用者的訂閱時間與狀態。 */
+    private void logSubscriber(long chatId) {
+        subscribers.findSummary(chatId).ifPresentOrElse(
+                s -> log.info("使用者 chat {} 訂閱於 {}，推播{}，觀察 {} 檔", chatId,
+                        s.createdAt().format(SUBSCRIBED_AT), s.enabled() ? "開啟中" : "已暫停", s.watchCount()),
+                () -> log.info("使用者 chat {} 尚未訂閱", chatId));
     }
 
     private static Map<String, String> menu() {
