@@ -164,7 +164,7 @@ Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 
 
 ## 專案結構
 
-架構圖、推播流程、互動流程與資料表見 [docs/architecture.md](docs/architecture.md)。
+程式交互與使用者操作流程圖見 [docs/flow.md](docs/flow.md)。
 
 ```
 com.eno.stockbot
