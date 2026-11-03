@@ -16,6 +16,9 @@ spring:
     scheduling:
       # 排程執行緒名稱，log 裡會顯示為 [push-job-1]
       thread-name-prefix: push-job-
+      # 定時推播、報價紀錄、每日 Excel 可能在同一分鐘觸發，避免互相排隊延誤
+      pool:
+        size: 3
   flyway:
     # 建表改由 Flyway 管理（db/migration/V*.sql），啟動時自動執行尚未跑過的版本
     # 既有資料庫（之前由 schema.sql 建立、沒有 flyway_schema_history）會先標記為 V1，再從 V2 開始執行
@@ -39,6 +42,15 @@ bot:
   schedule:
     # 交易日盤中每分鐘檢查一次，只推給「這一分鐘輪到」的使用者（時段與間隔由各使用者自行設定）
     cron: "0 * 9-13 * * MON-FRI"
+  history:
+    # 觀察清單中所有股票（所有人的聯集）每 30 分鐘記錄一次報價：09:00、09:30 … 13:30
+    record-cron: "0 0,30 9-13 * * MON-FRI"
+    # 收盤後再記錄一次最終價（13:30 收盤集合競價結果）
+    close-cron: "0 35 13 * * MON-FRI"
+    # 每天整理成 Excel 推給每位使用者（只含自己的觀察清單；已暫停推播的人不送）
+    report-cron: "0 0 14 * * MON-FRI"
+    # 歷史報價保留期限，超過的每天自動刪除（1m = 一個月）
+    retention: 1m
 
 logging:
   level:

@@ -1,6 +1,7 @@
 # stock-bot
 
 Telegram 機器人：交易日盤中依每位使用者自訂的時段與間隔（最短 1 分鐘），推播觀察清單的即時股價與漲跌幅，資料來源為富果行情 API（免費方案即可）。
+另外每 30 分鐘記錄一次報價，收盤後整理成 Excel 推給每位使用者，歷史報價保留一個月。
 
 - Spring Boot 3.5 / Java 21
 - Telegram：直接呼叫 Bot HTTP API（long polling，不需要公網 IP）
@@ -66,6 +67,7 @@ MySQL 資料在 `./data/mysql`，重建容器不會遺失訂閱。
 ```sql
 SELECT chat_id, username, enabled, push_start, push_end, interval_minutes FROM stockbot.subscriber;
 SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
+SELECT trade_date, snapshot_time, symbol, price, change_percent FROM stockbot.quote_snapshot ORDER BY trade_date DESC, snapshot_time, symbol;
 ```
 
 ## 操作方式
@@ -116,12 +118,31 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 - **排程**：`bot.schedule.cron`（預設 `0 * 9-13 * * MON-FRI`）每分鐘檢查一次，只推給這一分鐘輪到的使用者
 - **國定假日、颱風假**：富果回傳的資料日期不是今天時，自動略過推播，不需要維護假日表
 
+## 每日 Excel 報價紀錄
+
+| 時間（交易日） | 動作 |
+|---|---|
+| 09:00、09:30 … 13:30 | 記錄所有被訂閱股票（所有人觀察清單的聯集）的報價 |
+| 13:35 | 再記錄一次收盤後的最終價 |
+| 14:00 | 每位使用者收到一份 `股價紀錄_yyyy-MM-dd.xlsx`，接著刪除超過保留期限的舊資料 |
+
+- **Excel 內容**：只含自己觀察清單的股票，兩張工作表
+  - **總覽**：每列一檔股票，欄位為各時間點的成交價，最後是收盤漲跌、漲跌幅
+  - **明細**：每筆紀錄一列（日期、時間、代號、名稱、成交價、漲跌、漲跌幅），已開啟篩選
+  - 紅漲綠跌；沒有紀錄或尚無成交顯示 `-`
+- **誰會收到**：觀察清單不是空的、且沒有暫停推播的使用者（不需要先設定推播時段）
+- **紀錄與推播設定無關**：只要股票在任何人的觀察清單裡就會記錄；當天中途加入的股票只有加入後的紀錄
+- **休市日**：富果資料日期不是今天時不記錄，也不產生 Excel
+- **保留期限**：`bot.history.retention`（預設 `1m` = 一個月），每天 14:00 刪除更早的資料
+- 時間點都在 `application.yml` 的 `bot.history.*`
+
 ## 額度估算
 
 同一分鐘輪到的所有使用者，觀察清單取**聯集**後每檔只查一次，結果共用。
 30 秒內重複查詢同一檔會直接用快取（`bot.fugle.cache-ttl`）。
 
 最壞情況是大家都設定每 1 分鐘：每分鐘的請求數 = 所有人觀察清單的聯集檔數。
+每 30 分鐘的報價紀錄和定時推播查的是同一批股票，同一分鐘內會共用快取，不會多算一次。
 富果免費方案每分鐘 60 次，程式限制在 50 次，所以**聯集最好控制在 50 檔以內**。
 超過時限流器會自動排隊、不會被回 429，但那一輪推播會延遲到下一分鐘之後，下一分鐘的推播可能被略過。
 
@@ -139,7 +160,7 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 | 執行緒 | 用途 |
 |---|---|
 | `tg-update-N` | 處理一筆使用者訊息或按鈕（virtual thread，每筆一條） |
-| `push-job-N` | 每分鐘的定時推播排程 |
+| `push-job-N` | 排程（共 3 條）：每分鐘的定時推播、每 30 分鐘的報價紀錄、14:00 的每日 Excel |
 | `setup-notice` | 啟動時通知既有使用者重新設定 |
 | `telegram-poller` | long polling 收訊迴圈 |
 
@@ -149,6 +170,7 @@ SELECT chat_id, symbol, name FROM stockbot.watch ORDER BY chat_id, id;
 - **資料變更**（`[DB]`）：註冊、新增 / 移除股票、修改推播時段 / 間隔、暫停 / 恢復
 - **訊息**：每則送出的訊息（只印第一行）、每次原地更新、按鈕提示
 - **推播**：每輪到期的使用者、查詢的股票、每位使用者的推播結果、整輪耗時；沒人到期的分鐘只記 DEBUG
+- **歷史報價**：每次記錄的檔數、每日 Excel 送給誰、刪除的舊資料筆數
 - **錯誤**：Telegram 限流 / 網路重試、使用者封鎖 bot、富果 API 失敗
 
 輸出位置：console，以及 `logs/stock-bot.log`（10MB 或跨日切檔，壓縮保留 30 天）。
@@ -158,6 +180,7 @@ Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 
 
 - `V1__init.sql`：原本的 `subscriber`、`watch`
 - `V2__push_schedule.sql`：`subscriber` 新增 `push_start`、`push_end`、`interval_minutes`、`setup_notice_pending`
+- `V3__quote_history.sql`：新增 `quote_snapshot`（歷史報價）
 
 之前由 `schema.sql` 建好的資料庫，第一次啟動時會自動標記為 V1（`baseline-on-migrate`），再執行 V2。
 之後要改表結構，新增 `V3__xxx.sql` 即可，不要修改已執行過的檔案。
@@ -172,6 +195,7 @@ com.eno.stockbot
 ├── bot/           Command、Incoming、CommandHandler（畫面、按鈕、推播設定流程）、SetupNoticeSender（啟動時通知既有使用者）
 ├── config/        BotProperties（bot.* 設定）、AppConfig
 ├── market/        FugleClient（REST + 限流 + 429 重試）、QuoteService（快取）、Quote、RateLimiter
+├── history/       QuoteRecordJob（每 30 分鐘記錄報價）、DailyReportJob（收盤後推 Excel、清除舊資料）、DailyExcel、QuoteHistoryRepository
 ├── report/        IntradayReportJob（每分鐘檢查、推給到期的使用者）、ReportFormatter（訊息格式）
 ├── subscription/  Subscriber、PushSchedule（時段 / 間隔解析與到期判斷）、SubscriberRepository、WatchRepository
 └── telegram/      TelegramClient、TelegramPoller（long polling）、Notifier（429/403 處理、訊息切段）、Keyboards（按鈕）

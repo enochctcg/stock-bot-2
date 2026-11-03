@@ -1,7 +1,9 @@
 package com.eno.stockbot.subscription;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +74,11 @@ public class SubscriberRepository {
                    AND push_end IS NOT NULL
                    AND interval_minutes IS NOT NULL
                 """.formatted(COLUMNS), Subscriber.class);
+    }
+
+    /** 啟用中（沒有暫停推播、沒有封鎖 bot）的使用者，給每日 Excel 決定要送給誰。 */
+    public Set<Long> findEnabledChatIds() {
+        return new HashSet<>(db.queryColumn("SELECT chat_id FROM subscriber WHERE enabled = TRUE", Long.class));
     }
 
     /** 待通知「請重新設定推播」的使用者（V2 migration 時標記的既有使用者）。 */

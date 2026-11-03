@@ -55,6 +55,11 @@ public class WatchRepository {
                 Watch.class, chatId);
     }
 
+    /** 所有人觀察清單的聯集（每檔一次），給歷史報價紀錄用。 */
+    public List<String> findAllSymbols() {
+        return db.queryColumn("SELECT DISTINCT symbol FROM watch ORDER BY symbol", String.class);
+    }
+
     /** 所有人的觀察清單，依 chat_id 分組並保留加入順序；要推給誰由排程依各自的推播設定過濾。 */
     public Map<Long, List<String>> findGroupedByChat() {
         Map<Long, List<String>> result = new LinkedHashMap<>();

@@ -1,5 +1,6 @@
 package com.eno.stockbot.telegram;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,6 +11,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.stereotype.Component;
 
@@ -59,6 +61,43 @@ public class TelegramClient {
         call("sendMessage", body, Duration.ofSeconds(15));
     }
 
+    /** 傳送檔案（例如每日 Excel），caption 為檔案下方的說明文字，可為 null。 */
+    public void sendDocument(long chatId, String fileName, byte[] content, String caption) {
+        String boundary = "----stock-bot-" + UUID.randomUUID();
+        Map<String, String> fields = new LinkedHashMap<>();
+        fields.put("chat_id", String.valueOf(chatId));
+        if (caption != null && !caption.isBlank()) {
+            fields.put("caption", caption);
+        }
+        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + "sendDocument"))
+                .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                .timeout(Duration.ofSeconds(60))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(
+                        multipart(boundary, fields, "document", fileName, content)))
+                .build();
+        execute(request);
+    }
+
+    /** 組 multipart/form-data 內容：一般欄位 + 一個檔案。 */
+    static byte[] multipart(String boundary, Map<String, String> fields, String fileField, String fileName,
+                            byte[] content) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        fields.forEach((name, value) -> write(out, "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"" + name + "\"\r\n\r\n"
+                + value + "\r\n"));
+        write(out, "--" + boundary + "\r\n"
+                + "Content-Disposition: form-data; name=\"" + fileField + "\"; filename=\""
+                + fileName.replace("\"", "") + "\"\r\n"
+                + "Content-Type: application/octet-stream\r\n\r\n");
+        out.writeBytes(content);
+        write(out, "\r\n--" + boundary + "--\r\n");
+        return out.toByteArray();
+    }
+
+    private static void write(ByteArrayOutputStream out, String s) {
+        out.writeBytes(s.getBytes(StandardCharsets.UTF_8));
+    }
+
     /** 原地更新訊息內容與 inline 按鈕。 */
     public void editMessageText(long chatId, long messageId, String text, Object inlineMarkup) {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -101,6 +140,14 @@ public class TelegramClient {
                     .timeout(timeout)
                     .POST(HttpRequest.BodyPublishers.ofString(om.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
+            return execute(request);
+        } catch (IOException e) {
+            throw new TelegramApiException(0, "network error: " + e.getMessage(), 0);
+        }
+    }
+
+    private JsonNode execute(HttpRequest request) {
+        try {
             HttpResponse<String> resp = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             JsonNode json = om.readTree(resp.body());
 

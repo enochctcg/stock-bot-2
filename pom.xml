@@ -49,6 +49,13 @@
             <artifactId>flyway-mysql</artifactId>
         </dependency>
 
+        <!-- 每日報價紀錄的 Excel（.xlsx）；Spring Boot 沒有管理 POI 的版本，需自行指定 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-configuration-processor</artifactId>

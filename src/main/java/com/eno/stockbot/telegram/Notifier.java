@@ -58,13 +58,26 @@ public class Notifier {
         return allSent;
     }
 
+    /** 傳送檔案；限流、封鎖的處理和文字訊息相同。 */
+    public boolean sendDocument(long chatId, String fileName, byte[] content, String caption) {
+        Result r = deliver(chatId, () -> telegram.sendDocument(chatId, fileName, content, caption));
+        if (r == Result.SENT) {
+            log.info("已送出檔案 → chat {}：{}（{} KB）", chatId, fileName, (content.length + 1023) / 1024);
+        }
+        return r == Result.SENT;
+    }
+
     private enum Result { SENT, BLOCKED, FAILED }
 
     private Result sendOne(long chatId, String text, Object replyMarkup) {
+        return deliver(chatId, () -> telegram.sendMessage(chatId, text, replyMarkup));
+    }
+
+    private Result deliver(long chatId, Runnable call) {
         for (int attempt = 1; attempt <= 3; attempt++) {
             pace();
             try {
-                telegram.sendMessage(chatId, text, replyMarkup);
+                call.run();
                 return Result.SENT;
             } catch (TelegramClient.TelegramApiException e) {
                 if (e.errorCode() == 403) {

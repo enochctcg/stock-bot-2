@@ -13,6 +13,8 @@
 |---|---|---|
 | `TelegramPoller` | 使用者傳訊息 / 點按鈕 | `telegram-poller` 收訊，`tg-update-N` 處理 |
 | `IntradayReportJob` | 排程每分鐘一次（交易日盤中） | `push-job-N` |
+| `QuoteRecordJob` | 排程 09:00 ~ 13:30 每 30 分鐘，以及 13:35 收盤 | `push-job-N` |
+| `DailyReportJob` | 排程每天 14:00（交易日） | `push-job-N` |
 | `SetupNoticeSender` | 服務啟動完成（`ApplicationReadyEvent`） | `setup-notice` |
 
 ```mermaid
@@ -25,6 +27,8 @@ flowchart LR
         poller["TelegramPoller"]
         job["IntradayReportJob"]
         notice["SetupNoticeSender"]
+        rec["QuoteRecordJob"]
+        daily["DailyReportJob"]
     end
 
     handler["CommandHandler<br/>指令 / 選單 / 按鈕 → View"]
@@ -35,6 +39,8 @@ flowchart LR
         qs["QuoteService<br/>30 秒快取"]
         fc["FugleClient<br/>限流 + 重試"]
         repo["SubscriberRepository<br/>WatchRepository"]
+        hist["QuoteHistoryRepository"]
+        excel["DailyExcel<br/>產生 .xlsx"]
     end
 
     tg -- "getUpdates" --> poller
@@ -52,11 +58,20 @@ flowchart LR
     notice -- "findPendingSetupNotice /<br/>clearSetupNotice" --> repo
     notice -- "send" --> notifier
 
-    notifier -- "sendMessage" --> client
+    rec -- "findAllSymbols" --> repo
+    rec -- "getQuotes" --> qs
+    rec -- "save" --> hist
+    daily -- "findByDate /<br/>deleteBefore" --> hist
+    daily -- "findEnabledChatIds /<br/>findGroupedByChat" --> repo
+    daily -- "build" --> excel
+    daily -- "sendDocument" --> notifier
+
+    notifier -- "sendMessage /<br/>sendDocument" --> client
     notifier -. "403 封鎖 → setEnabled(false)" .-> repo
     client --> tg
     qs -- "快取過期才查" --> fc --> fugle
     repo --> db
+    hist --> db
 ```
 
 ### 1.2 使用者操作的處理路徑
@@ -132,7 +147,48 @@ sequenceDiagram
     end
 ```
 
-### 1.4 啟動時通知既有使用者
+### 1.4 報價紀錄與每日 Excel
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Spring Scheduler
+    participant RJ as QuoteRecordJob
+    participant DJ as DailyReportJob
+    participant R as Subscriber / Watch<br/>Repository
+    participant Q as QuoteService
+    participant H as QuoteHistoryRepository
+    participant X as DailyExcel
+    participant N as Notifier
+
+    Note over S,N: 09:00 ~ 13:30 每 30 分鐘、13:35 收盤
+    S->>RJ: record() / recordClose()
+    RJ->>R: findAllSymbols()（所有人清單的聯集）
+    RJ->>Q: getQuotes(symbols)
+    Q-->>RJ: 報價
+    alt 沒有今天的資料（休市）
+        RJ-->>S: 結束
+    else
+        RJ->>H: save(今天, 這一分鐘, 報價)
+    end
+
+    Note over S,N: 14:00
+    S->>DJ: run()
+    DJ->>H: findByDate(今天)
+    alt 沒有紀錄（休市）
+        Note over DJ: 不產生 Excel
+    else 有紀錄
+        DJ->>R: findEnabledChatIds() / findGroupedByChat()
+        loop 每位啟用中、清單不是空的使用者
+            DJ->>X: build(今天, 自己的清單, 紀錄)
+            X-->>DJ: .xlsx（總覽 + 明細）
+            DJ->>N: sendDocument
+        end
+    end
+    DJ->>H: deleteBefore(今天 − 一個月)
+```
+
+### 1.5 啟動時通知既有使用者
 
 ```mermaid
 sequenceDiagram
@@ -192,6 +248,7 @@ flowchart TD
     settings -- "⏸ 暫停 / ▶️ 恢復" --> settings
 
     push(["⏱ 交易日依設定收到定時推播"]) --> quote
+    excelMsg(["📑 交易日 14:00 收到當天的 Excel<br/>（暫停推播時不會收到）"])
 ```
 
 > 修改時段或間隔時，若另一項已設定，存完就直接回到設定總覽，不會再走下一步。
