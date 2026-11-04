@@ -103,7 +103,10 @@ public class CommandHandler {
     private static final DateTimeFormatter SUBSCRIBED_AT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     /** 畫面 = 文字 + 鍵盤（可為 null）。 */
-    record View(String text, Object markup) {
+    record View(String text, Object markup, boolean html) {
+        View(String text, Object markup) {
+            this(text, markup, false);
+        }
     }
 
     private final BotProperties props;
@@ -162,7 +165,7 @@ public class CommandHandler {
                 return;   // 群組裡的一般聊天不回應
             }
             if (view != null) {
-                notifier.send(chatId, view.text(), view.markup());
+                send(chatId, view);
             }
         } catch (FugleClient.FugleException e) {
             log.warn("處理 {} 時富果 API 失敗: {}", text, e.getMessage());
@@ -323,7 +326,7 @@ public class CommandHandler {
     /** 原地更新按鈕所在的訊息；內容沒變就略過，訊息太舊無法編輯時改送新訊息。 */
     private void edit(Incoming.Callback cb, View view) {
         try {
-            telegram.editMessageText(cb.chatId(), cb.messageId(), view.text(), view.markup());
+            telegram.editMessageText(cb.chatId(), cb.messageId(), view.text(), view.markup(), view.html());
             log.info("已原地更新訊息 {} → chat {}：{}", cb.messageId(), cb.chatId(), Notifier.preview(view.text()));
         } catch (TelegramClient.TelegramApiException e) {
             if (e.isMessageNotModified()) {
@@ -336,7 +339,11 @@ public class CommandHandler {
     }
 
     private void send(long chatId, View view) {
-        notifier.send(chatId, view.text(), view.markup());
+        if (view.html()) {
+            notifier.sendHtml(chatId, view.text(), view.markup());
+        } else {
+            notifier.send(chatId, view.text(), view.markup());
+        }
     }
 
     private void answer(Incoming.Callback cb, String toast) {
@@ -485,7 +492,7 @@ public class CommandHandler {
         if (!dataDate.equals(today)) {
             header += "（資料日期 " + dataDate + "）";
         }
-        return new View(ReportFormatter.format(header, symbols, result), quoteButtons());
+        return new View(ReportFormatter.format(header, symbols, result), quoteButtons(), true);
     }
 
     View listView(long chatId) {

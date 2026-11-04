@@ -16,28 +16,37 @@ class ReportFormatterTest {
     }
 
     @Test
-    void formatsUpDownFlatAndMissing() {
+    void formatsAlignedTableWithNameLast() {
         Map<String, Quote> quotes = Map.of(
-                "2330", quote("2330", "台積電", 1085.0, 15.0, 1.4),
-                "2317", quote("2317", "鴻海", 212.5, -1.0, -0.47),
-                "0050", quote("0050", "元大台灣50", 190.0, 0.0, 0.0),
+                "2330", quote("2330", "台積電", 2245.0, -50.0, -2.18),
+                "00632R", quote("00632R", "元大台灣50反1", 10.72, 0.2, 1.9),
+                "0050", quote("0050", "元大台灣50", 98.4, 0.0, 0.0),
                 "6488", quote("6488", "環球晶", null, null, null));
 
-        String text = ReportFormatter.format("⏱ 10:20 盤中報價",
-                List.of("2330", "2317", "0050", "6488", "9999"), quotes);
+        String text = ReportFormatter.format("⏱ 12:30 盤中報價",
+                List.of("2330", "00632R", "0050", "6488", "9999"), quotes);
 
         assertEquals("""
-                ⏱ 10:20 盤中報價
-                🔴 2330 台積電  1,085.00  +15.00 (+1.40%)
-                🟢 2317 鴻海  212.50  -1.00 (-0.47%)
-                ⚪ 0050 元大台灣50  190.00  0.00 (+0.00%)
-                ⚪ 6488 環球晶  尚無成交
-                ❔ 9999  查無資料""", text);
+                ⏱ 12:30 盤中報價
+                <pre>Code      Price    Chg   Chg%    Name
+                2330   2,245.00 -50.00 -2.18% 🟢 台積電
+                00632R    10.72  +0.20 +1.90% 🔴 元大台灣50反1
+                0050      98.40   0.00 +0.00% ⚪ 元大台灣50
+                6488          -      -      - ⚪ 環球晶 尚無成交
+                9999          -      -      - ❔ 查無資料</pre>""", text);
     }
 
     @Test
-    void appendsLimitAndTrialFlags() {
+    void appendsLimitAndTrialFlagsAfterName() {
         Quote q = new Quote("1234", "X", "2026-10-28", 11.0, 1.0, 10.0, true, false, true, false, true);
-        assertEquals("🔴 1234 X  11.00  +1.00 (+10.00%) 漲停 ⏸暫停 (試撮)", ReportFormatter.line(q));
+        assertEquals("🔴 X 漲停 ⏸暫停 (試撮)", ReportFormatter.row(q).label());
+    }
+
+    @Test
+    void escapesHtmlInHeaderAndNames() {
+        Map<String, Quote> quotes = Map.of("1234", quote("1234", "A&B<C>", 10.0, 0.0, 0.0));
+        String text = ReportFormatter.format("x < y", List.of("1234"), quotes);
+        assertEquals("x &lt; y", text.lines().findFirst().orElseThrow());
+        assertEquals(true, text.contains("A&amp;B&lt;C&gt;"));
     }
 }

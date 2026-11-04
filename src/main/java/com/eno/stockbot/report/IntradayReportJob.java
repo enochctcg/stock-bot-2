@@ -115,7 +115,7 @@ public class IntradayReportJob {
             long chatId = e.getKey();
             MDC.put("chatId", String.valueOf(chatId));   // 這位使用者推播過程中的 log 都帶上 chat id
             try {
-                boolean sent = notifier.send(chatId, ReportFormatter.format(header, e.getValue(), result), buttons);
+                boolean sent = notifier.sendHtml(chatId, ReportFormatter.format(header, e.getValue(), result), buttons);
                 if (sent) {
                     ok++;
                     log.info("{} 推播成功 → chat {}，{} 檔：{}", PushSchedule.format(now), chatId, e.getValue().size(), e.getValue());

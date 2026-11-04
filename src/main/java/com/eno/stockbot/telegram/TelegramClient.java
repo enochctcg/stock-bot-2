@@ -52,9 +52,17 @@ public class TelegramClient {
 
     /** @param replyMarkup 鍵盤（見 {@link Keyboards}），可為 null */
     public void sendMessage(long chatId, String text, Object replyMarkup) {
+        sendMessage(chatId, text, replyMarkup, false);
+    }
+
+    /** @param html text 為 HTML 格式（例如報價表格的 &lt;pre&gt;）；一般訊息用純文字，避免使用者輸入的 &lt; 造成解析錯誤 */
+    public void sendMessage(long chatId, String text, Object replyMarkup, boolean html) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("chat_id", chatId);
         body.put("text", text);
+        if (html) {
+            body.put("parse_mode", "HTML");
+        }
         if (replyMarkup != null) {
             body.put("reply_markup", replyMarkup);
         }
@@ -99,11 +107,14 @@ public class TelegramClient {
     }
 
     /** 原地更新訊息內容與 inline 按鈕。 */
-    public void editMessageText(long chatId, long messageId, String text, Object inlineMarkup) {
+    public void editMessageText(long chatId, long messageId, String text, Object inlineMarkup, boolean html) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("chat_id", chatId);
         body.put("message_id", messageId);
         body.put("text", text);
+        if (html) {
+            body.put("parse_mode", "HTML");
+        }
         if (inlineMarkup != null) {
             body.put("reply_markup", inlineMarkup);
         }

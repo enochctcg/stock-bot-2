@@ -40,11 +40,23 @@ public class Notifier {
      * @return 所有片段都送達才回傳 true
      */
     public boolean send(long chatId, String text, Object replyMarkup) {
-        List<String> parts = split(text);
+        return send(chatId, text, replyMarkup, false);
+    }
+
+    /**
+     * HTML 格式的訊息（報價表格）。切段會把 &lt;pre&gt; 拆壞，所以不切；
+     * 觀察清單每人上限 20 檔，表格遠小於單則訊息上限。
+     */
+    public boolean sendHtml(long chatId, String text, Object replyMarkup) {
+        return send(chatId, text, replyMarkup, true);
+    }
+
+    private boolean send(long chatId, String text, Object replyMarkup, boolean html) {
+        List<String> parts = html ? List.of(text) : split(text);
         boolean allSent = true;
         for (int i = 0; i < parts.size(); i++) {
             Object markup = i == parts.size() - 1 ? replyMarkup : null;
-            Result r = sendOne(chatId, parts.get(i), markup);
+            Result r = sendOne(chatId, parts.get(i), markup, html);
             if (r == Result.SENT) {
                 log.info("已送出訊息 → chat {}{}：{}", chatId,
                         parts.size() > 1 ? "（第 " + (i + 1) + "/" + parts.size() + " 段）" : "", preview(parts.get(i)));
@@ -69,8 +81,8 @@ public class Notifier {
 
     private enum Result { SENT, BLOCKED, FAILED }
 
-    private Result sendOne(long chatId, String text, Object replyMarkup) {
-        return deliver(chatId, () -> telegram.sendMessage(chatId, text, replyMarkup));
+    private Result sendOne(long chatId, String text, Object replyMarkup, boolean html) {
+        return deliver(chatId, () -> telegram.sendMessage(chatId, text, replyMarkup, html));
     }
 
     private Result deliver(long chatId, Runnable call) {
