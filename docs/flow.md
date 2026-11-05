@@ -1,4 +1,4 @@
-# stock-bot 流程圖
+ㄉ# stock-bot 流程圖
 
 只記錄兩件事：**程式之間怎麼互相呼叫**、**使用者怎麼操作**。
 欄位、設定值等細節請看 README 與程式碼。
@@ -7,71 +7,81 @@
 
 ### 1.1 元件關係
 
-程式有三個入口，最後都經過同一組下層元件：
+入口放在 `trigger/`，依觸發端分資料夾；入口只接收觸發、轉交 service，呼叫方向只往下：
+`trigger → service → repository / client`。
 
-| 入口 | 觸發時機 | 執行緒 |
-|---|---|---|
-| `TelegramPoller` | 使用者傳訊息 / 點按鈕 | `telegram-poller` 收訊，`tg-update-N` 處理 |
-| `IntradayReportJob` | 排程每分鐘一次（交易日盤中） | `push-job-N` |
-| `QuoteRecordJob` | 排程 09:00 ~ 13:30 每 30 分鐘，以及 13:35 收盤 | `push-job-N` |
-| `DailyReportJob` | 排程每天 14:00（交易日） | `push-job-N` |
-| `SetupNoticeSender` | 服務啟動完成（`ApplicationReadyEvent`） | `setup-notice` |
+| 觸發端 | 入口 | 觸發時機 | 執行緒 |
+|---|---|---|---|
+| `trigger/telegram` | `TelegramPoller` → `CommandHandler` | 使用者傳訊息 / 點按鈕 | `telegram-poller` 收訊，`tg-update-N` 處理 |
+| `trigger/schedule` | `IntradayReportJob` | 每分鐘一次（交易日盤中） | `push-job-N` |
+| `trigger/schedule` | `QuoteRecordJob` | 09:00 ~ 13:30 每 30 分鐘，以及 13:35 收盤 | `push-job-N` |
+| `trigger/schedule` | `DailyReportJob` | 每天 14:00（交易日） | `push-job-N` |
+| `trigger/startup` | `SetupNoticeSender`、`SubscriberStartupLog` | 服務啟動完成（`ApplicationReadyEvent`） | `setup-notice` / main |
 
 ```mermaid
-flowchart LR
+flowchart TB
     tg(["Telegram Bot API"])
     fugle(["富果行情 API"])
     db[("MySQL")]
 
-    subgraph entry["入口"]
-        poller["TelegramPoller"]
-        job["IntradayReportJob"]
-        notice["SetupNoticeSender"]
-        rec["QuoteRecordJob"]
-        daily["DailyReportJob"]
+    subgraph trigger["trigger 入口"]
+        subgraph t_tg["telegram"]
+            poller["TelegramPoller"]
+            handler["CommandHandler"]
+        end
+        subgraph t_sch["schedule"]
+            job["IntradayReportJob"]
+            rec["QuoteRecordJob"]
+            daily["DailyReportJob"]
+        end
+        subgraph t_up["startup"]
+            notice["SetupNoticeSender"]
+            slog["SubscriberStartupLog"]
+        end
     end
 
-    handler["CommandHandler<br/>指令 / 選單 / 按鈕 → View"]
-
-    subgraph lower["下層元件"]
-        notifier["Notifier<br/>送訊息"]
-        client["TelegramClient<br/>HTTP 呼叫"]
+    subgraph service["service"]
+        subs["SubscriptionService"]
+        watch["WatchService"]
         qs["QuoteService<br/>30 秒快取"]
-        fc["FugleClient<br/>限流 + 重試"]
-        repo["SubscriberRepository<br/>WatchRepository"]
-        hist["QuoteHistoryRepository"]
-        excel["DailyExcel<br/>產生 .xlsx"]
+        push["IntradayPushService"]
+        recs["QuoteRecordService"]
+        dailys["DailyReportService<br/>+ DailyExcel"]
     end
 
-    tg -- "getUpdates" --> poller
-    poller -- "handleMessage /<br/>handleCallback" --> handler
+    subgraph repo["repository"]
+        srepo["SubscriberRepository"]
+        wrepo["WatchRepository"]
+        hrepo["QuoteHistoryRepository"]
+    end
+
+    subgraph client["client"]
+        notifier["Notifier"]
+        tclient["TelegramClient"]
+        fc["FugleClient<br/>限流 + 重試"]
+    end
+
+    tg -- "getUpdates" --> poller --> handler
+    handler --> subs & watch & qs
+    handler -- "send / editMessageText" --> notifier & tclient
     notice -- "windowView()" --> handler
+    notice --> subs
+    slog --> subs
+    job --> push
+    rec --> recs
+    daily --> dailys
 
-    handler -- "send" --> notifier
-    handler -- "editMessageText /<br/>answerCallbackQuery" --> client
-    handler -- "getQuote(s)" --> qs
-    handler -- "讀寫使用者 / 清單" --> repo
+    subs --> srepo
+    watch --> wrepo
+    watch -- "查股票是否存在" --> qs
+    push --> srepo & wrepo & qs & notifier
+    recs --> wrepo & qs & hrepo
+    dailys --> srepo & wrepo & hrepo & notifier
 
-    job -- "findPushReady /<br/>findGroupedByChat" --> repo
-    job -- "getQuotes" --> qs
-    job -- "send" --> notifier
-    notice -- "findPendingSetupNotice /<br/>clearSetupNotice" --> repo
-    notice -- "send" --> notifier
-
-    rec -- "findAllSymbols" --> repo
-    rec -- "getQuotes" --> qs
-    rec -- "save" --> hist
-    daily -- "findByDate /<br/>deleteBefore" --> hist
-    daily -- "findEnabledChatIds /<br/>findGroupedByChat" --> repo
-    daily -- "build" --> excel
-    daily -- "sendDocument" --> notifier
-
-    notifier -- "sendMessage /<br/>sendDocument" --> client
-    notifier -. "403 封鎖 → setEnabled(false)" .-> repo
-    client --> tg
     qs -- "快取過期才查" --> fc --> fugle
-    repo --> db
-    hist --> db
+    notifier --> tclient --> tg
+    notifier -. "403 封鎖 → setEnabled(false)" .-> srepo
+    srepo & wrepo & hrepo --> db
 ```
 
 ### 1.2 使用者操作的處理路徑
@@ -86,7 +96,7 @@ sequenceDiagram
     participant T as Telegram
     participant P as TelegramPoller
     participant H as CommandHandler
-    participant R as Repository
+    participant S as Subscription / Watch<br/>Service
     participant Q as QuoteService
     participant N as Notifier
     participant C as TelegramClient
@@ -96,7 +106,7 @@ sequenceDiagram
     T-->>P: update
     P->>H: 開一條 virtual thread<br/>handleMessage / handleCallback
     H->>H: 檢查白名單
-    H->>R: 讀寫使用者、觀察清單、推播設定
+    H->>S: 讀寫使用者、觀察清單、推播設定
     opt 需要報價（即時報價 / 新增股票）
         H->>Q: getQuote(s)
         Q-->>H: Quote
@@ -120,27 +130,29 @@ sequenceDiagram
     autonumber
     participant S as Spring Scheduler
     participant J as IntradayReportJob
+    participant P as IntradayPushService
     participant R as Repository
     participant Q as QuoteService
     participant N as Notifier
     participant C as TelegramClient
 
     S->>J: tick()（每分鐘）
-    J->>R: findPushReady()
-    R-->>J: 已設定且啟用的使用者
-    J->>J: PushSchedule.isDue(現在) 篩出到期的人
+    J->>P: pushDue(這一分鐘)
+    P->>R: findPushReady()
+    R-->>P: 已設定且啟用的使用者
+    P->>P: PushSchedule.isDue(現在) 篩出到期的人
     alt 沒人到期
-        J-->>S: 結束
+        P-->>J: 結束
     else 有人到期
-        J->>R: findGroupedByChat()
-        R-->>J: chatId → 股票清單
-        J->>Q: getQuotes(所有到期者的股票聯集)
-        Q-->>J: 報價
+        P->>R: findGroupedByChat()
+        R-->>P: chatId → 股票清單
+        P->>Q: getQuotes(所有到期者的股票聯集)
+        Q-->>P: 報價
         alt 沒有今天的資料（休市）
-            J-->>S: 結束
+            P-->>J: 結束
         else
             loop 每位到期的使用者
-                J->>N: send(ReportFormatter.format(...), 報價按鈕)
+                P->>N: sendHtml(ReportFormatter.format(...), 報價按鈕)
                 N->>C: sendMessage
             end
         end
@@ -154,38 +166,41 @@ sequenceDiagram
     autonumber
     participant S as Spring Scheduler
     participant RJ as QuoteRecordJob
+    participant RS as QuoteRecordService
     participant DJ as DailyReportJob
+    participant DS as DailyReportService
     participant R as Subscriber / Watch<br/>Repository
     participant Q as QuoteService
     participant H as QuoteHistoryRepository
-    participant X as DailyExcel
     participant N as Notifier
 
     Note over S,N: 09:00 ~ 13:30 每 30 分鐘、13:35 收盤
     S->>RJ: record() / recordClose()
-    RJ->>R: findAllSymbols()（所有人清單的聯集）
-    RJ->>Q: getQuotes(symbols)
-    Q-->>RJ: 報價
+    RJ->>RS: record(今天, 這一分鐘)
+    RS->>R: findAllSymbols()（所有人清單的聯集）
+    RS->>Q: getQuotes(symbols)
+    Q-->>RS: 報價
     alt 沒有今天的資料（休市）
-        RJ-->>S: 結束
+        RS-->>RJ: 結束
     else
-        RJ->>H: save(今天, 這一分鐘, 報價)
+        RS->>H: save(今天, 這一分鐘, 報價)
     end
 
     Note over S,N: 14:00
     S->>DJ: run()
-    DJ->>H: findByDate(今天)
-    alt 沒有紀錄（休市）
-        Note over DJ: 不產生 Excel
-    else 有紀錄
-        DJ->>R: findEnabledChatIds() / findGroupedByChat()
-        loop 每位啟用中、清單不是空的使用者
-            DJ->>X: build(今天, 自己的清單, 紀錄)
-            X-->>DJ: .xlsx（總覽 + 明細）
-            DJ->>N: sendDocument
+    DJ->>DS: sendReports(今天)
+    DS->>R: findEnabledChatIds() / findGroupedByChat()
+    loop 每位啟用中的使用者
+        DS->>H: find(QuoteSnapshotSo(今天, 自己的清單))
+        alt 沒有紀錄（休市）
+            Note over DS: 不產生 Excel
+        else 有紀錄
+            DS->>DS: DailyExcel.build → .xlsx（總覽 + 明細）
+            DS->>N: sendDocument
         end
     end
-    DJ->>H: deleteBefore(今天 − 一個月)
+    DJ->>DS: purgeExpired(今天)
+    DS->>H: deleteBefore(今天 − 一個月)
 ```
 
 ### 1.5 啟動時通知既有使用者
@@ -195,7 +210,7 @@ sequenceDiagram
     autonumber
     participant B as Spring Boot
     participant S as SetupNoticeSender
-    participant R as SubscriberRepository
+    participant R as SubscriptionService
     participant H as CommandHandler
     participant N as Notifier
 

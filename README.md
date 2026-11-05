@@ -199,15 +199,29 @@ Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 
 
 ```
 com.eno.stockbot
-├── common/        JdbcUtil（JdbcTemplate 封裝：Optional 單筆、record 映射、慢查詢 log）
-├── bot/           Command、Incoming、CommandHandler（畫面、按鈕、推播設定流程）、SetupNoticeSender（啟動時通知既有使用者）
-├── config/        BotProperties（bot.* 設定）、AppConfig
-├── market/        FugleClient（REST + 限流 + 429 重試）、QuoteService（快取）、Quote、RateLimiter
-├── history/       QuoteRecordJob（每 30 分鐘記錄報價）、DailyReportJob（收盤後推 Excel、清除舊資料）、DailyExcel、QuoteHistoryRepository
-├── report/        IntradayReportJob（每分鐘檢查、推給到期的使用者）、ReportFormatter（訊息格式）
-├── subscription/  Subscriber、PushSchedule（時段 / 間隔解析與到期判斷）、SubscriberRepository、WatchRepository
-└── telegram/      TelegramClient、TelegramPoller（long polling）、Notifier（429/403 處理、訊息切段）、Keyboards（按鈕）
+├── trigger/            入口，依「誰觸發」分資料夾；只負責接收觸發、轉交 service
+│   ├── telegram/       使用者操作：TelegramPoller（long polling）、CommandHandler（指令 / 按鈕 → 畫面）
+│   ├── schedule/       排程：IntradayReportJob（每分鐘）、QuoteRecordJob（每 30 分鐘 + 收盤）、DailyReportJob（14:00）
+│   └── startup/        服務啟動：SetupNoticeSender（通知既有使用者重新設定）、SubscriberStartupLog（列出訂閱者）
+├── service/            商業邏輯
+│   ├── SubscriptionService   訂閱 / 暫停 / 恢復、推播時段與間隔
+│   ├── WatchService          觀察清單新增（格式、重複、上限、查股票）/ 移除
+│   ├── QuoteService          報價查詢（30 秒快取）
+│   ├── IntradayPushService   篩出這一分鐘到期的人並推播報價
+│   ├── QuoteRecordService    記錄所有被訂閱股票的報價
+│   ├── DailyReportService    產生並推送每日 Excel、清除過期資料
+│   └── ReportFormatter、DailyExcel   報價表格、Excel 產生
+├── repository/         SubscriberRepository、WatchRepository、QuoteHistoryRepository（SQL）
+├── client/             外部系統：TelegramClient、Notifier（429/403、切段）、Keyboards（按鈕 / callback_data）、FugleClient、RateLimiter
+├── bean/               對應資料表的一列：Subscriber、Watch、QuoteSnapshot
+├── bo/                 商業邏輯物件：PushSchedule（時段 / 間隔解析與到期判斷）、Command、View、WatchChange、SubscriberSummary
+├── so/                 查詢條件：QuoteSnapshotSo（日期 + 代號清單）
+├── dto/                外部 API 進出的資料：Quote（富果回應）、Incoming（Telegram update）
+├── config/             BotProperties（bot.* 設定）、AppConfig
+└── common/             JdbcUtil（JdbcTemplate 封裝：Optional 單筆、record 映射、慢查詢 log）
 ```
+
+呼叫方向只往下：`trigger → service → repository / client`，`bean / bo / so / dto` 是各層共用的資料物件。
 
 ## 第一次執行前建議
 
