@@ -7,7 +7,8 @@ spring:
     import: optional:file:.env[.properties]
   datasource:
     # MySQL 8.0.19 以上（upsert 用到 INSERT ... AS alias 語法）
-    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:stockbot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Taipei&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true
+    # useAffectedRows=true：upsert 沒有變化時回 0（預設會回 1，無法分辨「新增」和「沒變」）
+    url: jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/${DB_NAME:stockbot}?useUnicode=true&characterEncoding=utf8&connectionTimeZone=Asia/Taipei&createDatabaseIfNotExist=true&allowPublicKeyRetrieval=true&useAffectedRows=true
     username: ${DB_USERNAME:stockbot}
     password: ${DB_PASSWORD:}
     hikari:
@@ -24,6 +25,14 @@ spring:
     # 既有資料庫（之前由 schema.sql 建立、沒有 flyway_schema_history）會先標記為 V1，再從 V2 開始執行
     baseline-on-migrate: true
     baseline-version: 1
+
+mybatis-plus:
+  # 關掉啟動時的 MyBatis-Plus banner
+  global-config:
+    banner: false
+  configuration:
+    # 欄位 snake_case 自動對應 camelCase（chat_id → chatId）
+    map-underscore-to-camel-case: true
 
 bot:
   telegram:

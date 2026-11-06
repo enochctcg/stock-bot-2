@@ -155,12 +155,12 @@ Code      Price    Chg   Chg%    Name
 每一行都帶**台北時間（毫秒）**、**執行緒名稱**，處理使用者操作時還會帶 chat id 與 Telegram update id：
 
 ```
-2026-11-02 09:10:00.012 INFO  [push-job-1] [chat=- upd=-] IntradayReportJob - 09:10 排程檢查：3 位已設定推播，1 位到期 [987654321]
-2026-11-02 09:10:00.358 INFO  [push-job-1] [chat=987654321 upd=-] IntradayReportJob - 09:10 推播成功 → chat 987654321，2 檔：[2330, 2317]
+2026-11-02 09:10:00.012 INFO  [push-job-1] [chat=- upd=-] IntradayPushService - 09:10 排程檢查：3 位已設定推播，1 位到期 [987654321]
+2026-11-02 09:10:00.358 INFO  [push-job-1] [chat=987654321 upd=-] IntradayPushService - 09:10 推播成功 → chat 987654321，2 檔：[2330, 2317]
 2026-11-02 10:03:41.205 INFO  [telegram-poller] [chat=- upd=-] TelegramPoller - offset 123456790 → 123456791
 2026-11-02 10:03:41.207 INFO  [tg-update-12] [chat=987654321 upd=123456790] TelegramPoller - 收到 按鈕 data=l:rm:2330 msg=55 user=eno_dev
 2026-11-02 10:03:41.215 INFO  [tg-update-12] [chat=987654321 upd=123456790] CommandHandler - 使用者 chat 987654321 訂閱於 2026-10-28 21:14:05，推播開啟中，觀察 3 檔
-2026-11-02 10:03:41.231 INFO  [tg-update-12] [chat=987654321 upd=123456790] WatchRepository - [DB] 觀察清單移除 chat 987654321：2330（已刪除）
+2026-11-02 10:03:41.231 INFO  [tg-update-12] [chat=987654321 upd=123456790] WatchService - [DB] 觀察清單移除 chat 987654321：2330（已刪除）
 ```
 
 | 執行緒 | 用途 |
@@ -180,6 +180,8 @@ Code      Price    Chg   Chg%    Name
 - **推播**：每輪到期的使用者、查詢的股票、每位使用者的推播結果、整輪耗時；沒人到期的分鐘只記 DEBUG
 - **歷史報價**：每次記錄的檔數、每日 Excel 送給誰、刪除的舊資料筆數
 - **錯誤**：Telegram 限流 / 網路重試、使用者封鎖 bot、富果 API 失敗
+- **SQL**（`SqlTimingInterceptor`）：超過 500 ms 的 SQL 以 WARN 記錄；把 `logging.level.com.eno.stockbot.config.SqlTimingInterceptor` 設成 `DEBUG` 可以看到每支 SQL 與參數
+- **HTTP**（`HttpUtil`）：設成 `DEBUG` 可以看到每次請求的狀態碼與耗時（bot token 會遮蔽）
 
 輸出位置：console，以及 `logs/stock-bot.log`（10MB 或跨日切檔，壓縮保留 30 天）。
 Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 的 `logging.pattern`。
@@ -199,29 +201,32 @@ Docker 部署時 `logs/` 掛載在主機上。格式設定在 `application.yml` 
 
 ```
 com.eno.stockbot
-├── trigger/            入口，依「誰觸發」分資料夾；只負責接收觸發、轉交 service
-│   ├── telegram/       使用者操作：TelegramPoller（long polling）、CommandHandler（指令 / 按鈕 → 畫面）
-│   ├── schedule/       排程：IntradayReportJob（每分鐘）、QuoteRecordJob（每 30 分鐘 + 收盤）、DailyReportJob（14:00）
-│   └── startup/        服務啟動：SetupNoticeSender（通知既有使用者重新設定）、SubscriberStartupLog（列出訂閱者）
-├── service/            商業邏輯
-│   ├── SubscriptionService   訂閱 / 暫停 / 恢復、推播時段與間隔
-│   ├── WatchService          觀察清單新增（格式、重複、上限、查股票）/ 移除
-│   ├── QuoteService          報價查詢（30 秒快取）
-│   ├── IntradayPushService   篩出這一分鐘到期的人並推播報價
-│   ├── QuoteRecordService    記錄所有被訂閱股票的報價
-│   ├── DailyReportService    產生並推送每日 Excel、清除過期資料
-│   └── ReportFormatter、DailyExcel   報價表格、Excel 產生
-├── repository/         SubscriberRepository、WatchRepository、QuoteHistoryRepository（SQL）
-├── client/             外部系統：TelegramClient、Notifier（429/403、切段）、Keyboards（按鈕 / callback_data）、FugleClient、RateLimiter
-├── bean/               對應資料表的一列：Subscriber、Watch、QuoteSnapshot
-├── bo/                 商業邏輯物件：PushSchedule（時段 / 間隔解析與到期判斷）、Command、View、WatchChange、SubscriberSummary
-├── so/                 查詢條件：QuoteSnapshotSo（日期 + 代號清單）
-├── dto/                外部 API 進出的資料：Quote（富果回應）、Incoming（Telegram update）
-├── config/             BotProperties（bot.* 設定）、AppConfig
-└── common/             JdbcUtil（JdbcTemplate 封裝：Optional 單筆、record 映射、慢查詢 log）
+├── config/                   AppConfig、BotProperties（bot.* 設定）、MybatisPlusConfig、SqlTimingInterceptor（SQL 耗時 log）
+├── common/http/              HttpUtil（共用 HTTP：GET / POST JSON / multipart、逾時、log）、HttpResult、HttpException
+├── bean/                     資料物件
+│   ├── subscriber/           資料表：Subscriber、Watch、QuoteSnapshot
+│   │                         其他：PushSchedule（時段 / 間隔解析與到期判斷）、SubscriberSummary、WatchChange、QuoteSnapshotSo（查詢條件）
+│   ├── fugle/                Quote（富果回應）
+│   └── telegram/             Incoming（Telegram update）、Command（指令解析）、View（畫面 = 文字 + 按鈕）
+├── mapper/
+│   └── subscriber/           SubscriberMapper、WatchMapper、QuoteSnapshotMapper（MyBatis-Plus）
+├── service/                  商業邏輯
+│   ├── subscriber/           SubscriptionService（訂閱 / 暫停 / 推播設定）、WatchService（觀察清單）、
+│   │                         QuoteHistoryService（歷史報價存取）、IntradayPushService（定時推播）、
+│   │                         QuoteRecordService（記錄報價）、DailyReportService + DailyExcel（每日 Excel）
+│   ├── fugle/                FugleClient（REST + 限流 + 429 重試）、QuoteService（30 秒快取）、RateLimiter
+│   └── telegram/             TelegramClient、Notifier（429/403、切段）、Keyboards（按鈕 / callback_data）、ReportFormatter（報價表格）
+├── handler/                  外部觸發的入口
+│   ├── telegram/             TelegramPoller（long polling）、CommandHandler（指令 / 按鈕 → 畫面）、SetupNoticeSender（啟動時通知）
+│   └── subscriber/           SubscriberStartupLog（啟動時列出訂閱者）
+└── schedule/                 IntradayReportJob（每分鐘）、QuoteRecordJob（每 30 分鐘 + 收盤）、DailyReportJob（14:00）
 ```
 
-呼叫方向只往下：`trigger → service → repository / client`，`bean / bo / so / dto` 是各層共用的資料物件。
+呼叫方向：`handler / schedule → service → mapper / HttpUtil`，`bean` 是各層共用的資料物件。
+
+資料庫存取用 MyBatis-Plus：
+- 簡單的查詢 / 更新 / 刪除寫在 service，用 `Wrappers.lambdaQuery()` / `lambdaUpdate()`
+- `ON DUPLICATE KEY` 的 upsert、批次寫入、子查詢等自訂 SQL 寫在 Mapper 介面的 `@Insert` / `@Select`
 
 ## 第一次執行前建議
 

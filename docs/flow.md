@@ -7,16 +7,18 @@
 
 ### 1.1 元件關係
 
-入口放在 `trigger/`，依觸發端分資料夾；入口只接收觸發、轉交 service，呼叫方向只往下：
-`trigger → service → repository / client`。
+入口有兩種：`handler/`（外部觸發：Telegram 訊息、服務啟動）與 `schedule/`（排程）。
+入口只負責接收觸發、轉交 service；service 再透過 mapper 存取 MySQL，透過共用的 `HttpUtil` 呼叫外部 API。
+`handler`、`service`、`mapper`、`bean` 底下都依對象分成 `subscriber`（訂閱者）、`fugle`（富果）、`telegram`。
 
-| 觸發端 | 入口 | 觸發時機 | 執行緒 |
+| 入口 | 類別 | 觸發時機 | 執行緒 |
 |---|---|---|---|
-| `trigger/telegram` | `TelegramPoller` → `CommandHandler` | 使用者傳訊息 / 點按鈕 | `telegram-poller` 收訊，`tg-update-N` 處理 |
-| `trigger/schedule` | `IntradayReportJob` | 每分鐘一次（交易日盤中） | `push-job-N` |
-| `trigger/schedule` | `QuoteRecordJob` | 09:00 ~ 13:30 每 30 分鐘，以及 13:35 收盤 | `push-job-N` |
-| `trigger/schedule` | `DailyReportJob` | 每天 14:00（交易日） | `push-job-N` |
-| `trigger/startup` | `SetupNoticeSender`、`SubscriberStartupLog` | 服務啟動完成（`ApplicationReadyEvent`） | `setup-notice` / main |
+| `handler/telegram` | `TelegramPoller` → `CommandHandler` | 使用者傳訊息 / 點按鈕 | `telegram-poller` 收訊，`tg-update-N` 處理 |
+| `handler/telegram` | `SetupNoticeSender` | 服務啟動完成（`ApplicationReadyEvent`） | `setup-notice` |
+| `handler/subscriber` | `SubscriberStartupLog` | 服務啟動完成（`ApplicationReadyEvent`） | main |
+| `schedule` | `IntradayReportJob` | 每分鐘一次（交易日盤中） | `push-job-N` |
+| `schedule` | `QuoteRecordJob` | 09:00 ~ 13:30 每 30 分鐘，以及 13:35 收盤 | `push-job-N` |
+| `schedule` | `DailyReportJob` | 每天 14:00（交易日） | `push-job-N` |
 
 ```mermaid
 flowchart TB
@@ -24,42 +26,46 @@ flowchart TB
     fugle(["富果行情 API"])
     db[("MySQL")]
 
-    subgraph trigger["trigger 入口"]
-        subgraph t_tg["telegram"]
+    subgraph entry["handler / schedule 入口"]
+        subgraph h_tg["handler/telegram"]
             poller["TelegramPoller"]
             handler["CommandHandler"]
+            notice["SetupNoticeSender"]
         end
-        subgraph t_sch["schedule"]
+        slog["handler/subscriber<br/>SubscriberStartupLog"]
+        subgraph sch["schedule"]
             job["IntradayReportJob"]
             rec["QuoteRecordJob"]
             daily["DailyReportJob"]
         end
-        subgraph t_up["startup"]
-            notice["SetupNoticeSender"]
-            slog["SubscriberStartupLog"]
-        end
     end
 
-    subgraph service["service"]
+    subgraph s_sub["service/subscriber"]
         subs["SubscriptionService"]
         watch["WatchService"]
-        qs["QuoteService<br/>30 秒快取"]
+        hist["QuoteHistoryService"]
         push["IntradayPushService"]
         recs["QuoteRecordService"]
         dailys["DailyReportService<br/>+ DailyExcel"]
     end
 
-    subgraph repo["repository"]
-        srepo["SubscriberRepository"]
-        wrepo["WatchRepository"]
-        hrepo["QuoteHistoryRepository"]
-    end
-
-    subgraph client["client"]
-        notifier["Notifier"]
-        tclient["TelegramClient"]
+    subgraph s_fugle["service/fugle"]
+        qs["QuoteService<br/>30 秒快取"]
         fc["FugleClient<br/>限流 + 重試"]
     end
+
+    subgraph s_tg["service/telegram"]
+        notifier["Notifier"]
+        tclient["TelegramClient"]
+    end
+
+    subgraph mapper["mapper/subscriber"]
+        smap["SubscriberMapper"]
+        wmap["WatchMapper"]
+        qmap["QuoteSnapshotMapper"]
+    end
+
+    http["common/http<br/>HttpUtil"]
 
     tg -- "getUpdates" --> poller --> handler
     handler --> subs & watch & qs
@@ -71,17 +77,21 @@ flowchart TB
     rec --> recs
     daily --> dailys
 
-    subs --> srepo
-    watch --> wrepo
     watch -- "查股票是否存在" --> qs
-    push --> srepo & wrepo & qs & notifier
-    recs --> wrepo & qs & hrepo
-    dailys --> srepo & wrepo & hrepo & notifier
+    push --> subs & watch & qs & notifier
+    recs --> watch & qs & hist
+    dailys --> subs & watch & hist & notifier
+    notifier -. "403 封鎖 → disable" .-> subs
 
-    qs -- "快取過期才查" --> fc --> fugle
-    notifier --> tclient --> tg
-    notifier -. "403 封鎖 → setEnabled(false)" .-> srepo
-    srepo & wrepo & hrepo --> db
+    subs --> smap
+    watch --> wmap
+    hist --> qmap
+    smap & wmap & qmap --> db
+
+    qs -- "快取過期才查" --> fc
+    notifier --> tclient
+    fc & tclient --> http
+    http --> fugle & tg
 ```
 
 ### 1.2 使用者操作的處理路徑
@@ -131,7 +141,7 @@ sequenceDiagram
     participant S as Spring Scheduler
     participant J as IntradayReportJob
     participant P as IntradayPushService
-    participant R as Repository
+    participant R as Subscription / Watch<br/>Service
     participant Q as QuoteService
     participant N as Notifier
     participant C as TelegramClient
@@ -169,9 +179,9 @@ sequenceDiagram
     participant RS as QuoteRecordService
     participant DJ as DailyReportJob
     participant DS as DailyReportService
-    participant R as Subscriber / Watch<br/>Repository
+    participant R as Subscription / Watch<br/>Service
     participant Q as QuoteService
-    participant H as QuoteHistoryRepository
+    participant H as QuoteHistoryService
     participant N as Notifier
 
     Note over S,N: 09:00 ~ 13:30 每 30 分鐘、13:35 收盤
